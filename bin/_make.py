@@ -9,6 +9,13 @@ PKGDIR = '/home/users/pjh/scripts/python_genome_packages'
 PKGPATH = PKGDIR + '/handygenome'
 TARGETDIR = '.'
 
+
+# delete existing ones
+for fname in os.listdir('.'):
+    if not fname.startswith('_'):
+        os.remove(fname)
+
+# create new ones
 for top, dirs, files in os.walk(os.path.join(PKGPATH, 'tools')):
     for fname in files:
         if fname.endswith('.py') and not fname.startswith('_'):

@@ -1,3 +1,6 @@
+import pysam
+
+
 REPEATS_PATH = {
     'hg19': '/home/users/pjh/References/ucsc_data_files/modified_files/grch37/repeatmasker.bed.gz',
     'hg38': '/home/users/pjh/References/ucsc_data_files/modified_files/grch38/repeatmasker.bed.gz',
