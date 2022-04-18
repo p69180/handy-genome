@@ -1,0 +1,202 @@
+import re
+
+import importlib
+top_package_name = __name__.split('.')[0]
+common = importlib.import_module('.'.join([top_package_name, 'common']))
+hgvs_module = importlib.import_module('.'.join([top_package_name, 'hgvs']))
+
+
+REFVERS_ALLOWED = ('hg19', 'hg38', 'mm39')
+
+
+def into_37(s):
+	return re.sub('http://', 'http://grch37.', s)
+
+PREFIX_ID_38 = 'http://rest.ensembl.org/lookup/id/'
+PREFIX_ID_37 = into_37(PREFIX_ID_38)
+
+PREFIX_SYMBOL_38 = 'http://rest.ensembl.org/lookup/symbol/homo_sapiens/'
+PREFIX_SYMBOL_37 = into_37(PREFIX_SYMBOL_38)
+
+PREFIX_REGULATORY_38 = 'http://rest.ensembl.org/regulatory/species/homo_sapiens/id/'
+PREFIX_REGULATORY_37 = into_37(PREFIX_REGULATORY_38)
+
+PREFIX_VEP_38 = 'http://rest.ensembl.org/vep/human/hgvs/'
+PREFIX_VEP_37 = into_37(PREFIX_VEP_38)
+
+PREFIX_OVERLAP_38 = 'http://rest.ensembl.org/overlap/region/human/'
+PREFIX_OVERLAP_37 = into_37(PREFIX_OVERLAP_38)
+
+PREFIX_MAP_38 = 'https://rest.ensembl.org/map/'
+PREFIX_MAP_37 = into_37(PREFIX_MAP_38)
+
+
+def lookup_id(ID, hg19 = True, expand = True):
+	"""
+	start, end are 1-based inclusive coordinates
+	"""
+
+	prefix = PREFIX_ID_37 if hg19 else PREFIX_ID_38
+	url = prefix + ID
+	params = { 'expand' : int(expand) }
+
+	return common.http_get(url, params = params)
+
+
+def lookup_id_post(IDs, hg19 = True, expand = True):
+	"""
+	start, end are 1-based inclusive coordinates
+	"""
+
+	url = PREFIX_ID_37 if hg19 else PREFIX_ID_38
+	params = { 'expand' : int(expand) }
+	data = { 'ids' : IDs }
+
+	return common.http_post(url, data, params = params)
+
+
+def lookup_symbol(symbol, hg19 = True, expand = False):
+	prefix = PREFIX_SYMBOL_37 if hg19 else PREFIX_SYMBOL_38
+	url = prefix + symbol
+	params = { 'expand' : int(expand) }
+
+	return common.http_get(url, params = params)
+
+
+def lookup_symbol_post(symbols, hg19 = True, expand = False):
+	url = PREFIX_SYMBOL_37 if hg19 else PREFIX_SYMBOL_38
+	params = { 'expand' : int(expand) }
+	data = { 'symbols' : symbols }
+
+	return common.http_post(url, data, params = params)
+
+
+def regulatory(ID, hg19 = True):
+	prefix = PREFIX_REGULATORY_37 if hg19 else PREFIX_REGULATORY_38
+	url = prefix + ID
+	params = { 'activity' : 1 }
+
+	result = common.http_get(url, params = params)
+	if isinstance(result, list) and len(result) == 1:
+		result = result[0]
+	else:
+		raise Exception(f'REST regulatory result for ID {ID} is not a list with length of 1.')
+
+	return result
+
+
+def vep(
+		hgvsg = None,
+		vcfspec = None,
+		hg19 = True,
+		distance = 5000,
+		with_CADD = True,
+		with_Phenotypes = False,
+		with_canonical = True,
+		with_mane = True,
+		with_miRNA = False,
+		with_numbers = True,
+		with_protein = True,
+		with_ccds = True,
+		with_hgvs = True,
+		):
+	common.check_num_None(1, (vcfspec, hgvsg), ('vcfspec', 'hgvsg'))
+
+	prefix = PREFIX_VEP_37 if hg19 else PREFIX_VEP_38
+	
+	if hgvsg is None:
+		hgvsg = hgvs_module.vcfspec_to_hgvsg(vcfspec)
+
+	url = prefix + hgvsg
+
+	params = {
+		'distance' : distance,
+		'CADD' : int(with_CADD),
+		#'Phenotypes' : int(with_Phenotypes),
+		'canonical' : int(with_canonical),
+		'mane' : int(with_mane),
+		'miRNA' : int(with_miRNA),
+		'numbers' : int(with_numbers),
+		'protein' : int(with_protein),
+		'ccds' : int(with_ccds),
+		'hgvs' : int(with_hgvs),
+	}
+	if with_Phenotypes:
+		params.update( { 'Phenotypes' : int(with_Phenotypes) } )
+
+	return common.http_get(url, params = params)
+
+
+def vep_post(
+		vcfspec_list,
+		hg19 = True,
+		distance = 5000,
+		with_CADD = True,
+		with_Phenotypes = False,
+		with_canonical = True,
+		with_mane = True,
+		with_miRNA = False,
+		with_numbers = True,
+		with_protein = True,
+		with_ccds = True,
+		with_hgvs = True,
+		):
+	url = PREFIX_VEP_37 if hg19 else PREFIX_VEP_38
+
+	hgvsg_list = [ hgvs_module.vcfspec_to_hgvsg(vcfspec) for vcfspec in vcfspec_list ]
+	data = { 'hgvs_notations' : hgvsg_list }
+
+	params = {
+		'distance' : distance,
+		'CADD' : int(with_CADD),
+		#'Phenotypes' : int(with_Phenotypes),
+		'canonical' : int(with_canonical),
+		'mane' : int(with_mane),
+		'miRNA' : int(with_miRNA),
+		'numbers' : int(with_numbers),
+		'protein' : int(with_protein),
+		'ccds' : int(with_ccds),
+		'hgvs' : int(with_hgvs),
+	}
+	if with_Phenotypes:
+		params.update( { 'Phenotypes' : int(with_Phenotypes) } )
+
+	return common.http_post(url, data, params = params)
+
+
+def overlap(
+		chrom, start1, end1, hg19 = True, 
+		transcript = True, 
+		regulatory = True, 
+		motif = False, 
+		repeat = False,
+		):
+	'''start1, end1: 1-based closed system'''
+	prefix = PREFIX_OVERLAP_37 if hg19 else PREFIX_OVERLAP_38
+
+	suffix_list = list()
+	if transcript: 
+		suffix_list.append('feature=transcript')
+	if regulatory: 
+		suffix_list.append('feature=regulatory')
+	if motif: 
+		suffix_list.append('feature=motif')
+	if repeat: 
+		suffix_list.append('feature=repeat')
+	suffix = '?' + ';'.join(suffix_list)
+
+	url = prefix + f'{chrom}:{start1}-{end1}' + suffix
+
+	return common.http_get(url)
+
+
+def map(ID, start1, end1, mode, hg19 = True):
+	assert mode in ('cdna', 'cds', 'translation')
+	if hg19:
+		prefix = PREFIX_MAP_37 + mode + '/'
+	else:
+		prefix = PREFIX_MAP_38 + mode + '/'
+	url = prefix + ID + '/' + f'{start1}..{end1}'
+
+	return common.http_get(url)
+	

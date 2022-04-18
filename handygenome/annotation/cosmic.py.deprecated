@@ -1,0 +1,98 @@
+import pysam
+
+import importlib
+top_package_name = __name__.split('.')[0]
+infoformat = importlib.import_module('.'.join([top_package_name, 'variantplus', 'infoformat']))
+annotdb = importlib.import_module('.'.join([top_package_name, 'annotation', 'annotdb']))
+
+
+COSMIC_PATHS = {
+	'hg19' : {
+		'coding' : '/home/users/pjh/References/COSMIC/hg19/modified_files/v95/CosmicMutantExport.vcf.gz',
+		'noncoding' : '/home/users/pjh/References/COSMIC/hg19/modified_files/v95/CosmicNCV.vcf.gz',
+	},
+	'hg38' : {
+		'coding' : '/home/users/pjh/References/COSMIC/hg38/modified_files/v95/CosmicMutantExport.vcf.gz',
+		'noncoding' : '/home/users/pjh/References/COSMIC/hg38/modified_files/v95/CosmicNCV.vcf.gz',
+	}
+}
+
+COSMIC_INFOKEY = annotdb.AnnotDB.infokeys['cosmic']
+
+
+def get_cosmic_metadata():
+	result = dict()
+	for refver in ('hg19', 'hg38'):
+		result[refver] = dict()
+		for dbtype in ('coding', 'noncoding'):
+			result[refver][dbtype] = dict()
+			with pysam.VariantFile(COSMIC_PATHS[refver][dbtype]) as vcf:
+				for rec in vcf.header.records:
+					if rec.key == 'cosmic_version':
+						result[refver][dbtype]['version'] = rec.value
+						continue
+					elif rec.key.startswith('sample_count'):
+						result[refver][dbtype][rec.key] = int(rec.value)
+						continue
+
+	return result
+
+
+COSMIC_METADATAS = get_cosmic_metadata()
+
+
+##################
+
+
+def get_annotdata_cosmic_vr(cosmic_vr, cosmic_vr_noncoding):
+	annotdata = dict()
+
+	# fetch coding database
+	if cosmic_vr is not None:
+		annotdata['id'] = cosmic_vr.info['cosmic_ID']
+		annotdata['occurrence'] = cosmic_vr.info['cosmic_occurrence']
+		annotdata['portion'] = cosmic_vr.info['cosmic_portion']
+		annotdata['total_occurence'] = cosmic_vr.info['cosmic_total_occurrence']
+		annotdata['total_portion'] = cosmic_vr.info['cosmic_total_portion']
+		annotdata['occurrence_somatic'] = cosmic_vr.info['cosmic_occurrence_somatic']
+		annotdata['portion_somatic'] = cosmic_vr.info['cosmic_portion_somatic']
+		annotdata['total_occurence_somatic'] = cosmic_vr.info['cosmic_total_occurrence_somatic']
+		annotdata['total_portion_somatic'] = cosmic_vr.info['cosmic_total_portion_somatic']
+
+		annotdata['coding_score'] = cosmic_vr.info['cosmic_coding_score']
+		annotdata['noncoding_score'] = None
+
+	# fetch noncoding database, only if coding data is unavailable
+	# raises an exception if COSV IDs are different between coding and noncoding databases
+	if cosmic_vr_noncoding is not None:
+		if cosmic_vr is None:
+			annotdata['id'] = cosmic_vr_noncoding.info['cosmic_ID']
+			annotdata['occurrence'] = cosmic_vr_noncoding.info['cosmic_occurrence']
+			annotdata['portion'] = cosmic_vr_noncoding.info['cosmic_portion']
+			annotdata['total_occurence'] = cosmic_vr_noncoding.info['cosmic_total_occurrence']
+			annotdata['total_portion'] = cosmic_vr_noncoding.info['cosmic_total_portion']
+			annotdata['occurrence_somatic'] = cosmic_vr_noncoding.info['cosmic_occurrence_somatic']
+			annotdata['portion_somatic'] = cosmic_vr_noncoding.info['cosmic_portion_somatic']
+			annotdata['total_occurence_somatic'] = cosmic_vr_noncoding.info['cosmic_total_occurrence_somatic']
+			annotdata['total_portion_somatic'] = cosmic_vr_noncoding.info['cosmic_total_portion_somatic']
+
+			annotdata['coding_score'] = cosmic_vr_noncoding.info['cosmic_coding_score']
+			annotdata['noncoding_score'] = cosmic_vr_noncoding.info['cosmic_noncoding_score']
+
+		else:
+			if annotdata['id'] == cosmic_vr_noncoding.info['cosmic_ID']:
+				pass
+			else:
+				vcfspec = (cosmic_vr.chrom, cosmic_vr.pos, cosmic_vr.ref, cosmic_vr.alts[0])
+				raise Exception(f'Different COSV IDs between coding and noncoding databases for the same mutation: {vcfspec}')
+
+	return annotdata
+
+
+def annotate_cosmic_vr(vr, cosmic_vr, cosmic_vr_noncoding, addkey = False):
+	if addkey:
+		annotdb.add_infokeys(vr.header)
+
+	annotdict = get_annotdata_cosmic_vr(cosmic_vr, cosmic_vr_noncoding)
+	infostring = annotdb.encode_infostring(annotdict)
+	vr.info[COSMIC_INFOKEY] = infostring

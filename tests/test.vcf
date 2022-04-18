@@ -1,0 +1,12 @@
+##fileformat=VCFv4.3
+##contig=<ID=1,length=100000>
+##contig=<ID=2,length=100000>
+##FILTER=<ID=PASS,Description="All filters passed">
+##custominfo=JULAB
+##FILTER=<ID=FOO,Description="FOOFILTER">
+##INFO=<ID=FOO,Type=Integer,Number=.,Description="BAR">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="genotype">
+##FORMAT=<ID=BAZ,Type=Integer,Number=.,Description="HEHE">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	s1	s2
+1	1002	.	A	AG	.	.	FOO=.	GT:BAZ	0/1:.	0/1:10,20,30
+2	202	.	C	T	.	.	FOO=400	GT	.	0/1

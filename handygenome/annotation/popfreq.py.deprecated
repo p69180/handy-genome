@@ -1,0 +1,63 @@
+from pprint import pprint
+
+import pysam
+
+import importlib
+top_package_name = __name__.split('.')[0]
+#common = importlib.import_module('.'.join([top_package_name, 'common']))
+infoformat = importlib.import_module('.'.join([top_package_name, 'variantplus', 'infoformat']))
+annotdb = importlib.import_module('.'.join([top_package_name, 'annotation', 'annotdb']))
+
+
+DBSNP_PATHS = {
+	'hg19' : '/home/users/pjh/References/dbSNP37/modified_files_220218/dbSNP_b155_GRCh37.p13.vcf.gz',
+	'hg38' : '/home/users/pjh/References/dbSNP38/modified_files/dbSNP_b155_GRCh38.p13.vcf.gz',
+}
+
+POPFREQ_INFOKEY = annotdb.AnnotDB.infokeys['popfreq']
+
+
+def get_population_names(refver):
+	assert refver in DBSNP_PATHS
+
+	pop_names = list()
+	with pysam.VariantFile(DBSNP_PATHS[refver], 'r') as vcf:
+		for key in vcf.header.info:
+			if key.startswith('AF_'):
+				pop_names.append(key[3:])
+
+	return pop_names
+
+
+'''
+POP_NAMES = {
+	'hg19' : get_population_names('hg19'),
+	'hg38' : get_population_names('hg38'),
+}
+'''
+
+POP_NAMES = set( get_population_names('hg19') + get_population_names('hg38') )
+
+
+######
+
+
+def get_annotdata_dbsnp_vr(dbsnp_vr):
+	annotdata = dict()
+	annotdata['id'] = dbsnp_vr.info['dbSNP_ID']
+
+	for key, val in dbsnp_vr.info.items():
+		if key.startswith('AF_'):
+			pop = key[3:]
+			annotdata[pop] = infoformat.get_info(dbsnp_vr, key)
+
+	return annotdata
+
+
+def annotate_dbsnp_vr(vr, dbsnp_vr, addkey = False):
+	if addkey:
+		annotdb.add_infokeys(vr.header)
+
+	annotdict = get_annotdata_dbsnp_vr(dbsnp_vr)
+	infostring = annotdb.encode_infostring(annotdict)
+	vr.info[POPFREQ_INFOKEY] = infostring
