@@ -7,6 +7,7 @@ import time
 import logging
 import uuid
 import textwrap
+import itertools
 
 import importlib
 top_package_name = __name__.split('.')[0]
@@ -17,6 +18,7 @@ SLURMBIN = '/usr/local/slurm/bin'
 SQUEUE = os.path.join(SLURMBIN, 'squeue')
 SBATCH = os.path.join(SLURMBIN, 'sbatch')
 SCONTROL = os.path.join(SLURMBIN, 'scontrol')
+SCANCEL = os.path.join(SLURMBIN, 'scancel')
 SINFO = os.path.join(SLURMBIN, 'sinfo')
 
 PBSBIN = '/usr/local/pbs/bin/'
@@ -29,6 +31,9 @@ RE_PATS['scontrol_split_nodes'] = re.compile(r'(?<=\S)\s+(?=\S+=)')
 
 DEFAULT_INTV_CHECK = 60 # seconds
 DEFAULT_INTV_SUBMIT = 1 # seconds
+
+HELP_WIDTH = 50
+DESCRIPTION_WIDTH = 80
 
 
 # logging #
@@ -73,7 +78,7 @@ def get_logger(name=None, formatter=None, level='info', stderr=True,
     return logger
 
 
-################################################################
+# filesystem-related functions
 
 def get_split_filenames(n_file, outdir, prefix, suffix):
     """
@@ -90,13 +95,190 @@ def get_split_filenames(n_file, outdir, prefix, suffix):
     
     return result
 
-get_indexed_filenames = get_split_filenames  # alias
+
+def check_infile_validity(infile):
+    """
+    Raise:
+        If infile does not exist or user does not have read permission
+    """
+
+    if os.path.exists(infile):
+        if os.path.isfile(infile):
+            if not os.access(infile, os.R_OK):
+                raise Exception(f'You do not have read permission on '
+                                f'"{infile}".')
+        else:
+            raise Exception(f"'{infile}' is not a regular file.")
+    else:
+        raise Exception(f"'{infile}' does not exist.")
 
 
-# ARGUMENT PARSER SETUP FUNCTIONS
+def check_indir_validity(indir):
+    if os.path.exists(indir):
+        if os.path.isdir(indir):
+            if not os.access(indir, os.R_OK | os.X_OK):
+                raise Exception(f'You do not have read and execution '
+                                f'permission on "{indir}".')
+        else:
+            raise Exception(f"'{indir}' is not a directory.")
+    else:
+        raise Exception(f"'{indir}' does not exist.")
 
-class CustomFormatter(argparse.ArgumentDefaultsHelpFormatter):
+
+def check_outdir_validity(outdir):
+    """
+    Return: 
+        True if outdir already exists, otherwise False.
+
+    Raise:
+        If 1) outdir is an existing non-directory file, or 
+            2) outdir is an existing non-empty directory
+    """
+
+    if not os.path.exists(outdir):
+        if os.access(os.path.dirname(outdir), os.W_OK | os.X_OK):
+            return False
+        else:
+            raise Exception(f'You do not have w/x permission on '
+                            f'"dirname" of "{outdir}".')
+
+    elif os.path.isfile(outdir):
+        raise Exception(f"'{outdir}' is an existing regular file.")
+
+    elif os.path.isdir(outdir):
+        if os.access(outdir, os.W_OK | os.X_OK):
+            if len(os.listdir(outdir)) != 0:
+                raise Exception(
+                    f'"{outdir}" is an existing directory and is not empty.')
+            else:
+                return True
+        else:
+            raise Exception(
+                f'"{outdir}" is an existing directory which you do not '
+                f'have w/x permission on.')
+
+    else:
+        raise Exception(f'"{outdir}" is an existing file which is neither '
+                        f'a regular file nor a directory.')
+
+
+def check_outfile_validity(outfile, must_not_exist=False):
+    """
+    Return: 
+        True if outfile already exists, otherwise False.
+    Raise:
+        permission problem
+    """
+
+    if not os.path.exists(outfile):
+        if os.access(os.path.dirname(outfile), os.W_OK | os.X_OK):
+            return False
+        else:
+            raise Exception(f'You do not have w/x permission on dirname '
+                            f'of "{outfile}".')
+
+    elif os.path.isfile(outfile):
+        if must_not_exist:
+            raise Exception(f'Specified file "{outfile}" must not exist '
+                            f'in advance.')
+        else:
+            return True
+
+    elif os.path.isdir(outfile):
+        raise Exception(f"'{outfile}' is an existing directory.")
+
+    else:
+        raise Exception(f'"{outfile}" is an existing file which is neither '
+                        f'a regular file nor a directory.')
+
+
+def get_tmpfile_path(prefix=None, suffix=None, where = os.getcwd(), 
+                     delete=False, is_dir=False):
+    if delete:
+        fd, path = tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=where)
+        os.close(fd)
+        os.remove(path)
+    else:
+        if is_dir:
+            path = tempfile.mkdtemp(prefix=prefix, suffix=suffix, dir=where)
+        else:
+            fd, path = tempfile.mkstemp(prefix=prefix, suffix=suffix, 
+                                        dir=where)
+            os.close(fd)
+
+    return path
+
+
+def get_tmpdir_paths(subdirs, prefix=None, suffix=None, where=os.getcwd(), 
+                     top_path=None):
+    """
+    Args:
+        subdirs: An iterable which contains subdirectory basenames
+    """
+
+    assert 'top' not in subdirs, (
+        f'"subdirs" argument must not include the name "top".')
+
+    if top_path is None:
+        top_path = os.path.abspath(
+            get_tmpfile_path(prefix=prefix, suffix=suffix, where=where, 
+                             delete=False, is_dir=True))
+    else:
+        exists = check_outdir_validity(top_path)
+        if not exists:
+            os.mkdir(top_path)
+
+    tmpdir_paths = dict()
+    tmpdir_paths['top'] = top_path
+    for basename in subdirs:
+        tmpdir_paths[basename] = os.path.join(tmpdir_paths['top'], basename)
+        os.mkdir(tmpdir_paths[basename])
+
+    return tmpdir_paths
+
+
+# ARGPARSE SETUP FUNCTIONS
+
+class CustomFormatter(
+        argparse.ArgumentDefaultsHelpFormatter,
+        argparse.RawTextHelpFormatter):
     pass
+
+
+def init_parser(description=None):
+    if description is None:
+        parser = argparse.ArgumentParser(
+            description=None,
+            formatter_class=CustomFormatter, add_help=False)
+    else:
+        parser = argparse.ArgumentParser(
+            description=textwrap.fill(description, width=DESCRIPTION_WIDTH),
+            formatter_class=CustomFormatter, add_help=False)
+
+    required = parser.add_argument_group(
+        title='REQUIRED', 
+        description=textwrap.fill(
+            'Required ones which accept 1 or more arguments.',
+            width=DESCRIPTION_WIDTH))
+
+    optional = parser.add_argument_group(
+        title='OPTIONAL', 
+        description=textwrap.fill(
+            'Optional ones which accept 1 or more arguments.',
+            width=DESCRIPTION_WIDTH))
+
+    flag = parser.add_argument_group(
+        title='FLAG', 
+        description=textwrap.fill(
+            'Optional ones which accept 0 argument.',
+            width=DESCRIPTION_WIDTH))
+
+    add_help_arg(flag)
+
+    parser_dict = {'main': parser, 'required': required, 
+                   'optional': optional, 'flag': flag}
+
+    return parser_dict
 
 
 def get_basic_parser():
@@ -117,29 +299,11 @@ def get_basic_parser():
     return parser_dict['main']
 
 
-def init_parser(description=None):
-    parser = argparse.ArgumentParser(description=description, 
-                                     formatter_class=CustomFormatter,
-                                     add_help=False)
-    required = parser.add_argument_group(
-        title='REQUIRED', description='Required ones. Accepts 1 argument.')
-    optional = parser.add_argument_group(
-        title='OPTIONAL', description='Optional ones. Accepts 1 argument.')
-    flag = parser.add_argument_group(
-        title='FLAG', description='Optional ones which accept 0 argument.')
-
-    add_help_arg(flag)
-
-    parser_dict = {'main': parser, 'required': required, 
-                   'optional': optional, 'flag': flag}
-
-    return parser_dict
-
-
 def add_infile_arg(parser, required=True, help=f'Input vcf file path.'):
     parser.add_argument(
         '-i', '--infile', dest='infile_path', required=required, 
-        type=arghandler_infile, metavar='<input file path>', help=help)
+        type=arghandler_infile, metavar='<input file path>', 
+        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
 def add_infilelist_arg(
@@ -148,13 +312,14 @@ def add_infilelist_arg(
     parser.add_argument(
         '--infilelist', dest='infile_path_list', required=required, 
         nargs='+', type=arghandler_infile, metavar='<input file path>', 
-        help = help)
+        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
 def add_indir_arg(parser, required=True, help=f'Input directory path.'):
     parser.add_argument(
         '--dir', dest='indir_path', required=required, type=arghandler_indir,
-        metavar='<input directory path>', help=help)
+        metavar='<input directory path>',
+        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
 def add_outfile_arg(
@@ -163,28 +328,36 @@ def add_outfile_arg(
     handler = get_arghandler_outfile(must_not_exist)
     parser.add_argument(
         '-o', '--outfile', dest='outfile_path', required=required, 
-        type=handler, metavar='<output file path>', help = help)
+        type=handler, metavar='<output file path>',
+        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
-def add_outdir_arg(parser, required=True):
+def add_outdir_arg(
+        parser, required=True,
+        help=('Output directory path. It will be created if it does not '
+              'exist; otherwise it must be an empty directory.')):
     parser.add_argument(
         '--outdir', dest='outdir_path', required=True,
         type=arghandler_outdir, metavar='<output directory>',
-        help=('Output directory path. It will be created if it does not '
-              'exist; otherwise it must be an empty directory.'))
+        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
-def add_fasta_arg(parser, required=True):
+def add_fasta_arg(parser, required=True, help=None):
     available_versions = ", ".join(common.DEFAULT_FASTA_PATH_DICT.keys())
+
+    if help is None:
+        help=(f'A fasta file path or, alternatively, a reference genome '
+              f'version (one of {available_versions}), '
+              f'in which case a preset fasta file for the reference version '
+              f'is used.')
+
     parser.add_argument(
         '-f', '--fasta', dest='fasta_path', required=required,
         type=arghandler_fasta, metavar='<fasta path>', 
-        help=('A fasta file path or, alternatively, a reference genome '
-              f'version(one of {available_versions}), in which case a preset '
-              'fasta file for the reference version is used.'))
+        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
-def add_refver_arg(parser, required=True, choices='all'):
+def add_refver_arg(parser, required=True, choices='all', help=None):
     if choices == 'all':
         allowed_vals = tuple( common.CHR1_LENGTH_DICT.keys() )
     elif choices == 'mouse':
@@ -194,71 +367,98 @@ def add_refver_arg(parser, required=True, choices='all'):
     else:
         allowed_vals = choices
 
-    helpmsg = f'Reference genome version. Must be one of {allowed_vals}.'
+    if help is None:
+        help = f'Reference genome version. Must be one of {allowed_vals}.'
+
     parser.add_argument(
         '--refver', dest='refver', required=required, default=None, 
         choices=allowed_vals, metavar='<reference genome version>', 
-        help = helpmsg)
+        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
-def add_outfmt_arg(parser, required=False, default='z'):
+def add_outfmt_arg(
+        parser, required=False, default='z',
+        help=(f'Output vcf file format (bcftools style). Must be one of: '
+              f'v (uncompressed VCF), z (compressed VCF), '
+              f'u (uncompressed BCF), b (compressed BCF).')):
     assert default in ('v', 'z', 'u', 'b')
     parser.add_argument(
         '-O', '--output-format', dest='mode_pysam', required=required, 
         default=default, choices=('v', 'z', 'u', 'b'), 
         type=(lambda x: common.PYSAM_FORMAT_DICT[x]),
         metavar='<output format>',
-        help = ('Output vcf file format (bcftools style). Must be one of: '
-                'v (uncompressed VCF), z (compressed VCF), '
-                'u (uncompressed BCF), b (compressed BCF).'))
+        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
-def add_parallel_arg(parser, required=False, default=1):
+def add_parallel_arg(parser, required=False, default=1,
+                     help=f'Number of parallelization.'):
     parser.add_argument(
         '-p', '--parallel', dest='parallel', required=required,
         default=default, type=int,
         metavar='<number of parallelization>', 
-        help=f'Number of parallelization.')
+        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
-def add_sched_arg(parser, required=False, default='slurm'):
+def add_sched_arg(
+        parser, required=False, default='slurm',
+        help=f'Parallelization method. Must be "slurm" or "local".'):
     assert default in ('slurm', 'local')
     parser.add_argument(
         '--sched', dest='sched', required=required, default=default, 
         choices=('slurm', 'local'), metavar='<"slurm" or "local">', 
-        help = f'Parallelization method. Must be "slurm" or "local".')
+        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
-def add_checkint_arg(parser, required=False, default=DEFAULT_INTV_CHECK):
+def add_checkint_arg(
+        parser, required=False, default=DEFAULT_INTV_CHECK,
+        help=f'Slurm job status check interval in seconds.'):
     parser.add_argument(
         '--slurm-check-interval', dest='intv_check', required=required,
         default=default, type=int, metavar='<slurm check interval>', 
-        help=f'Slurm job status check interval in seconds.')
+        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
-def add_submitint_arg(parser, required=False, default=DEFAULT_INTV_SUBMIT):
+def add_submitint_arg(
+        parser, required=False, default=DEFAULT_INTV_SUBMIT,
+        help=f'Slurm job submission interval in seconds.'):
     parser.add_argument(
         '--slurm-submit-interval', dest='intv_submit', required=required,
         default=default, type=int, metavar='<slurm submit interval>', 
-        help=f'Slurm job submission interval in seconds.')
+        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
-def add_help_arg(parser):
+def add_index_arg(parser_dict,
+                  help='If set, output vcf file is not indexed.'):
+    parser_dict['flag'].add_argument(
+        '--donot-index', dest='donot_index', action='store_true',
+        help=textwrap.fill(help, width=HELP_WIDTH))
+
+
+def add_help_arg(parser, help='show this help message and exit'):
     parser.add_argument('-h', '--help', action='help',
-                        help='show this help message and exit')
+                        help=textwrap.fill(help, width=HELP_WIDTH))
 
 
 # functions which receive 'parser_dict' argument
 
-
 def add_logging_args(parser_dict):
     parser_dict['optional'].add_argument(
         '--log', required=False, 
-        help=('If used, progress messages will be written to this file. '
-              'Existing file will be truncated.'))
+        help=textwrap.fill(
+            f'If used, progress messages will be written to this file. '
+            f'Existing file will be truncated.',
+            width=HELP_WIDTH))
+
+    parser_dict['flag'].add_argument(
+        '--append-log', dest='append_log', action='store_true',
+        help=textwrap.fill('If set, existing log file is not trucated.',
+                           width=HELP_WIDTH))
+
     parser_dict['flag'].add_argument(
         '--silent', action='store_true',
-        help='If set, progress messages will not be printed to the terminal.')
+        help=textwrap.fill(
+            'If set, progress messages will not be printed to the terminal.',
+            width=HELP_WIDTH))
 
 
 def add_scheduler_args(parser_dict, default_parallel=1, default_sched='slurm',
@@ -276,26 +476,27 @@ def add_scheduler_args(parser_dict, default_parallel=1, default_sched='slurm',
 
 def add_rmtmp_arg(parser_dict):
     parser_dict['flag'].add_argument(
-        '--dont-remove-tmp', dest='dont_rm_tmp', action='store_true',
-        help=('If set, temporary files are not removed (which are removed '
-              'by default).'))
+        '--donot-remove-tmp', dest='donot_rm_tmp', action='store_true',
+        help=textwrap.fill(
+            'If set, temporary files are not removed (which are removed by '
+            'default).',
+            width=HELP_WIDTH))
 
 
-############################################
-
+# arghandlers
 
 def arghandler_infile(arg):
     arg = os.path.abspath(arg)
 
     try:
-        common.check_infile_validity(arg)
+        check_infile_validity(arg)
     except Exception as e:
         raise argparse.ArgumentTypeError(str(e))
     else:
         return arg
 
 
-def arghandler_infile_list(arg):
+def arghandler_infilelist(arg):
     """Args:
         arg: A list of input file paths 
     """
@@ -307,7 +508,7 @@ def arghandler_indir(arg):
     arg = os.path.abspath(arg)
 
     try:
-        common.check_indir_validity(arg)
+        check_indir_validity(arg)
     except Exception as e:
         raise argparse.ArgumentTypeError(str(e))
     else:
@@ -318,13 +519,13 @@ def arghandler_outfile_ask(arg):
     arg = os.path.abspath(arg)
 
     try:
-        exists = common.check_outfile_validity(arg, must_not_exist=False)
+        exists = check_outfile_validity(arg, must_not_exist=False)
     except Exception as e:
         raise argparse.ArgumentTypeError(str(e))
     else:
         if exists:
             msg = (f'Specified output file "{arg}" already exists. Would '
-                       f'you like to proceed with overwriting? (y/n) ')
+                   f'you like to proceed with overwriting? (y/n) ')
             ans = input(msg)
             while True:
                 if ans == 'y':
@@ -342,7 +543,7 @@ def arghandler_outfile_mayexist(arg):
     arg = os.path.abspath(arg)
 
     try:
-        common.check_outfile_validity(arg, must_not_exist=False)
+        check_outfile_validity(arg, must_not_exist=False)
     except Exception as e:
         raise argparse.ArgumentTypeError(str(e))
     else:
@@ -353,7 +554,7 @@ def arghandler_outfile_mustbeabsent(arg):
     arg = os.path.abspath(arg)
 
     try:
-        common.check_outfile_validity(arg, must_not_exist=True)
+        check_outfile_validity(arg, must_not_exist=True)
     except Exception as e:
         raise argparse.ArgumentTypeError(str(e))
     else:
@@ -375,7 +576,7 @@ def arghandler_outdir(arg):
     arg = os.path.abspath(arg)
 
     try:
-        exists = common.check_outdir_validity(arg)
+        exists = check_outdir_validity(arg)
     except Exception as e:
         raise argparse.ArgumentTypeError(str(e))
     else:
@@ -391,9 +592,42 @@ def arghandler_fasta(arg):
         return arghandler_infile(arg)
 
 
+# decorators
+
+def get_deco_arghandler_infile(argname):
+    def decorator(func):
+        sig = inspect.signature(func)
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            ba = sig.bind(*args, **kwargs)
+            ba.arguments[argname] = arghandler_infile(ba.arguments[argname])
+
+            return func(*ba.args, **ba.kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def get_deco_arghandler_infilelist(argname):
+    def decorator(func):
+        sig = inspect.signature(func)
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            ba = sig.bind(*args, **kwargs)
+            ba.arguments[argname] = arghandler_infilelist(
+                ba.arguments[argname])
+
+            return func(*ba.args, **ba.kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 ##########################################################
-
-
 
 
 """
@@ -474,6 +708,23 @@ class Job:
         else:
             self._submit_path()
 
+    def cancel(self):
+        assert self.submitted, f'The job is not yet submitted.'
+        p = subprocess.run([SCANCEL, str(self.jobid)],
+                           capture_output=True, text=True)
+        if p.returncode != 0:
+            self.scancel_err_info = textwrap.dedent(f"""\
+                Job cancellation using scancel failed.
+
+                job id: {self.jobid}
+                scancel stdout: {p.stdout}
+                scancel stderr: {p.stderr}
+                scancel exit code: {p.returncode}""")
+            raise Exception(self.scancel_err_info)
+        else:
+            self.update()
+            self.logger.info(f'Cancelled a job: JobID - {self.jobid}')
+
     def check_pending(self):
         if self.submitted:
             self.update()
@@ -533,6 +784,7 @@ class Job:
             if self.status['finished']:
                 self.success = (jobstate == 'COMPLETED')
                 self.exitcode = int(scontrol_result['ExitCode'].split(':')[0])
+
 
     ##########################
 
@@ -611,7 +863,11 @@ class JobList(list):
             job.submit()
             time.sleep(intv_submit)
 
-    def wait(self, intv_check=DEFAULT_INTV_CHECK, edit_log_suffix=True):
+    def cancel_all_running(self):
+        for job in self.jobs_running:
+            job.cancel()
+
+    def wait(self, intv_check=DEFAULT_INTV_CHECK):
         def log_status():
             pending = ", ".join(str(job.jobid) for job in self.jobs_pending)
             running = ", ".join(str(job.jobid) for job in self.jobs_running)
@@ -625,62 +881,65 @@ class JobList(list):
             self.logger.info(msg)
 
         def log_epilogue():
-            msg = f'''
-    All finished.
-    Successful jobs: {len(self.jobs_success)} (JobIDs: {", ".join(str(job.jobid) for job in self.jobs_success)})
-    Failed jobs: {len(self.jobs_failure)} (JobIDs: {", ".join(str(job.jobid) for job in self.jobs_failure)})
-    Jobs with unknown exit statuses: {len(self.jobs_unknown)} (JobIDs: {", ".join(str(job.jobid) for job in self.jobs_unknown)})
-'''
+            n_succ = len(self.jobs_success)
+            ids_succ = ", ".join(str(job.jobid) for job in self.jobs_success)
+            n_fail = len(self.jobs_failure)
+            ids_fail = ", ".join(str(job.jobid) for job in self.jobs_failure)
+            n_unk = len(self.jobs_unknown)
+            ids_unk = ", ".join(str(job.jobid) for job in self.jobs_unknown)
+
+            msg = textwrap.dedent(f"""\
+                All finished.
+                Successful jobs: {n_succ} (JobIDs: {ids_succ})
+                Failed jobs: {n_fail} (JobIDs: {ids_fail})
+                Jobs with unknown exit statuses: {n_unk} (JobIDs: {ids_unk})
+                """)
             self.logger.info(msg)
 
         def main():
-            while True:
-                self.update()
-                self.set_sublists_statuses()
-                log_status()
-                if all( job.status['finished'] for job in self ):
-                    break
-                else:
-                    time.sleep(intv_check)
-                    continue
-
-            self.set_sublists_exitcodes()
-            log_epilogue()
-            self.success = all(job.success for job in self)
-            if edit_log_suffix:
-                self._edit_log_suffix()
+            try:
+                while True:
+                    self.update()
+                    self.set_sublists_statuses()
+                    log_status()
+                    if all(job.status['finished'] for job in self):
+                        break
+                    else:
+                        time.sleep(intv_check)
+                        continue
+            except KeyboardInterrupt:
+                self.logger.info(
+                    f'RECEIVED A KEYBOARD INTERRUPT; '
+                    f'will cancel all pending and running jobs with scancel,'
+                    f' then exit immediately.')
+                for job in itertools.chain(self.jobs_pending, 
+                                           self.jobs_running):
+                    job.cancel()
+                raise SystemExit(1)
+            else:
+                self.set_sublists_exitcodes()
+                log_epilogue()
+                self.success = all(job.success for job in self)
 
         main()
 
     def get_exitcodes(self):
-        return [ job.exitcode for job in self ]
+        return [job.exitcode for job in self]
 
     def update(self):
         for job in self:
             job.update()
 
     def set_sublists_statuses(self):
-        self.jobs_notsubmit = [ job for job in self if not job.submitted ]
-        self.jobs_pending = [ job for job in self if job.status['pending'] ]
-        self.jobs_running = [ job for job in self if job.status['running'] ]
-        self.jobs_finished = [ job for job in self if job.status['finished'] ]
+        self.jobs_notsubmit = [job for job in self if not job.submitted]
+        self.jobs_pending = [job for job in self if job.status['pending']]
+        self.jobs_running = [job for job in self if job.status['running']]
+        self.jobs_finished = [job for job in self if job.status['finished']]
 
     def set_sublists_exitcodes(self):
-        self.jobs_success = [ job for job in self if job.success is True ]
-        self.jobs_failure = [ job for job in self if job.success is False ]
-        self.jobs_unknown = [ job for job in self if job.success is None ]
-
-    def _edit_log_suffix(self):
-        for job in self:
-            if job.stderr_path is None:
-                continue
-
-            if job.exitcode == 0:
-                new_logpath = re.sub('\.log$', '.success', job.stderr_path)
-            else:
-                new_logpath = re.sub('\.log$', '.failure', job.stderr_path)
-
-            os.rename(job.stderr_path, new_logpath)
+        self.jobs_success = [job for job in self if job.success is True]
+        self.jobs_failure = [job for job in self if job.success is False]
+        self.jobs_unknown = [job for job in self if job.success is None]
 
 
 def get_scontrol_job_result(jobid):
@@ -707,7 +966,7 @@ def get_scontrol_job_result(jobid):
     """
 
     cmdargs = [ SCONTROL, '-o', 'show', 'job', str(jobid) ]
-    p = subprocess.run(args = cmdargs, text = True, capture_output = True)
+    p = subprocess.run(args=cmdargs, text=True, capture_output=True)
 
     returncode = p.returncode
     stderr = p.stderr
@@ -835,7 +1094,7 @@ def make_jobscript_string(lines, shell = False, python = False, **kwargs):
 
 
 def make_jobscript(jobscript_path, lines, **kwargs):
-    common.check_outfile_validity(jobscript_path)
+    check_outfile_validity(jobscript_path)
     jobscript_string = make_jobscript_string(lines, **kwargs)
     with open(jobscript_path, 'w') as outfile:
         outfile.write(jobscript_string)

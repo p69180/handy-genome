@@ -10,6 +10,7 @@ top_package_name = __name__.split('.')[0]
 common = importlib.import_module('.'.join([top_package_name, 'common']))
 workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
 merge_module = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'merge']))
+indexing = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'indexing']))
 
 
 def argument_parser(cmdargs):
@@ -38,10 +39,12 @@ def argument_parser(cmdargs):
 
     parser_dict['optional'].add_argument(
         '--isec-indices', dest='isec_indices', required=False,
-        help=('(Only applied for intersection) A string composed of 0 or 1, ' 
-              'with the same length as the number of input files. Files '
-              'marked with 0 are excluded and those with 1 are included.'))
+        help=textwrap.dedent(f"""\
+            (Only applied for intersection) A string composed of 0 or 1,
+            with the same length as the number of input files. Files 
+            marked with 0 are excluded and those with 1 are included."""))
     workflow.add_logging_args(parser_dict)
+    workflow.add_index_arg(parser_dict)
     workflow.add_outfmt_arg(parser_dict['optional'], required=False)
 
     args = parser_dict['main'].parse_args(cmdargs)
@@ -59,11 +62,9 @@ def main(cmdargs):
 
     merge_module.main_file(
         infile_path_list=args.infile_path_list,
-        outfile_path=args.outfile_path,
-        fasta_path=args.fasta_path,
-        isec=(args.mode == 'isec'),
-        isec_indices=args.isec_indices, 
-        mode_pysam=args.mode_pysam,
-        outfile_must_not_exist='no',
-        logger=logger,
-        )
+        outfile_path=args.outfile_path, fasta_path=args.fasta_path,
+        isec=(args.mode == 'isec'), isec_indices=args.isec_indices, 
+        mode_pysam=args.mode_pysam, outfile_must_not_exist='no', logger=logger)
+
+    if not args.donot_index:
+        indexing.index_vcf(args.outfile_path)

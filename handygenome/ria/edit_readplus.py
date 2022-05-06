@@ -9,7 +9,7 @@ common = importlib.import_module('.'.join([top_package_name, 'common']))
 
 def add_seq_REFrange_to_readplus(
 		rp, CHROM, POS0, REF, ALT,
-		pos0_before_var = None, 
+		pos0_before_var = None,
 		pos0_after_var = None,
 		):
 

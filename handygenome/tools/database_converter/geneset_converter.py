@@ -93,10 +93,10 @@ def write_uncompressed_file(outfile_path_uncomp, line_list_comment, linesp_list_
 			outfile.write('\t'.join(linesp) + '\n')
 
 
-def convert_common(original_url, output_chrname_version, refver, logger, outfile_path, download_path = None):
+def convert_common(original_url, output_chrname_version, refver, logger, outfile_path, download_path=None):
 	# download
 	if download_path is None:
-		download_path = common.get_tmpfile_path()
+		download_path = workflow.get_tmpfile_path()
 		download(logger, original_url, download_path)
 		rm_downloaded = True
 	else:

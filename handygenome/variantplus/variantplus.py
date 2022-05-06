@@ -41,18 +41,16 @@ class VariantPlus:
     """
 
     def __init__(self, vr, fasta=None, chromdict=None, refver=None,
-                 add_annotdb_infometas=True):
+                 add_annotdb_infometas=False, set_annotdb=True):
         """
         Args:
             vr: pysam.VariantRecord instance
             fasta: pysam.FastaFile instance
-            chromdict: julib.common.Chromdict instance
+            chromdict: handygenome.common.Chromdict instance
         """
 
         assert len(vr.alts) == 1, (
             f'Multiallelic variant record is not allowed:\n{vr}')
-
-        #assert set_bnds in ('default', 'vplist', 'fetch'), f'"set_bnds" argument must be one of "default", "vplist", "fetch".'
 
         self.vr = vr
         self.refver = (common.infer_refver_vr(self.vr)
@@ -62,39 +60,54 @@ class VariantPlus:
             pysam.FastaFile(common.DEFAULT_FASTA_PATH_DICT[self.refver])
             if fasta is None else
             fasta)
-
-        # chromdict
-        if chromdict is None:
-            self.chromdict = common.ChromDict(fasta=self.fasta)
-        else:
-            self.chromdict = chromdict
-
-        # vcfspec
+        self.chromdict = (common.ChromDict(fasta=self.fasta)
+                          if chromdict is None else
+                          chromdict)
         self.vcfspec = varianthandler.get_vcfspec(self.vr)
 
         # SV attrs
         self.is_sv = varianthandler.check_SV(self.vr)
-        self._set_bnds_attributes() # is_bnd1, bnds
+        self.set_bnds_attributes() # is_bnd1, bnds
 
         # annotdb
         if add_annotdb_infometas:
             annotationdb.add_infometas(self.vr.header)
-
-        if self.is_sv:
-            if self.bnds.chrom1 != self.bnds.chrom2:
-                self.annotdb_bnd1 = annotationdb.AnnotDB(
-                    'bnd1', self.refver, self.fasta, vr=self.vr)
-                self.annotdb_bnd2 = annotationdb.AnnotDB(
-                    'bnd2', self.refver, self.fasta, vr=self.vr)
-            else:
-                self.annotdb = annotationdb.AnnotDB(
-                    'plain', self.refver, self.fasta, vr=self.vr)
-        else:
-            self.annotdb = annotationdb.AnnotDB(
-                'plain', self.refver, self.fasta, vr=self.vr)
+        if set_annotdb:
+            self.set_annotdb()
 
     def __repr__(self):
-        return (f'self.vr.contig' + 'self.vr.pos')
+        vr_string = '\t'.join(str(self.vr).split('\t')[:5])
+        return f'<VariantPlus object ({vr_string})>'
+
+    def set_annotdb(self):
+        if self.is_sv:
+            if self.bnds.chrom_bnd1 != self.bnds.chrom_bnd2:
+                self.annotdb_bnd1 = annotationdb.AnnotDB(
+                    'bnd1', self.refver, self.fasta, self.chromdict,
+                    vr=self.vr)
+                self.annotdb_bnd2 = annotationdb.AnnotDB(
+                    'bnd2', self.refver, self.fasta, self.chromdict,
+                    vr=self.vr)
+            else:
+                self.annotdb = annotationdb.AnnotDB(
+                    'plain', self.refver, self.fasta, self.chromdict,
+                    vr=self.vr)
+        else:
+            self.annotdb = annotationdb.AnnotDB(
+                'plain', self.refver, self.fasta, self.chromdict, vr=self.vr)
+
+    ##################################################################
+
+    def get_gene_names(self, canonical_only=True):
+        if canonical_only:
+            return [feature['gene_name'] 
+                    for feature in self.annotdb.transcript_canon_ovlp.values()]
+        else:
+            return [feature['gene_name'] 
+                    for feature in self.annotdb.transcript_ovlp.values()]
+
+    def check_intergenic(self):
+        return len(self.annotdb.transcript) == 0
 
     def get_info(self, key):
         return infoformat.get_value_info(self.vr, key)
@@ -116,57 +129,45 @@ class VariantPlus:
 
     ##################################################################
 
-    def update_popfreq(self):
-        self.annotdb.update_popfreq(self.vr, search_equivs = True)
-        self.annotdb.write_popfreq(self.vr, addkey = False)
-    
-    def update_cosmic(self):
-        self.annotdb.update_cosmic(self.vr, search_equivs = True)
-        self.annotdb.write_cosmic(self.vr, addkey = False)
+#    def update_popfreq(self):
+#        self.annotdb.update_popfreq(self.vr, search_equivs = True)
+#        self.annotdb.write_popfreq(self.vr, addkey = False)
+#    
+#    def update_cosmic(self):
+#        self.annotdb.update_cosmic(self.vr, search_equivs = True)
+#        self.annotdb.write_cosmic(self.vr, addkey = False)
 
-    def update_features(
-            self, 
-            distance = 5000,
-            vep = True, overlap = True, transcript = True, regulatory = True,
-            ):
-        self.annotdb.update_features(
-                self.vr, 
-                hg19 = None, distance = distance,
-                vep = vep, overlap = overlap, transcript = transcript, regulatory = regulatory,
-                )
-        self.annotdb.write_features(self.vr, addkey = False)
+#    def update_features(self, distance=5000, vep=True, overlap=True, 
+#                        transcript=True, regulatory=True):
+#        self.annotdb.update_features(
+#            self.vr, hg19=None, distance=distance,
+#            vep=vep, overlap=overlap, 
+#            transcript=transcript, regulatory=regulatory)
+#        self.annotdb.write_features(self.vr, addkey = False)
 
     ##################################################################
 
-    def get_vrs_for_write(self):
-        assert self.is_sv
-        assert self.is_bnd1
+    def get_vr_bnd2(self):
+        assert self.bnds is not None, f'"bnds" attribute must be set.'
 
-        id_pos1 = self.bnds.get_id_pos1()
-        id_pos2 = self.bnds.get_id_pos2()
+        vr_bnd2 = self.vr.header.new_record()
+        vr_bnd2.id = self.bnds.get_id_bnd2()
+        vcfspec_bnd2 = self.bnds.get_vcfspec_bnd2()
+        varianthandler.apply_vcfspec(vr_bnd2, vcfspec_bnd2)
+        vr_bnd2.info['MATEID'] = self.vr.id
 
-        vr_pos1 = self.vr.copy()
-        vr_pos1.id = id_pos1
-        vr_pos1.info['MATEID'] = id_pos2
-
-        vr_pos2 = self.vr.header.new_record()
-        varianthandler.apply_vcfspec(vr_pos2, self.bnds.get_vcfspec_pos2())
-        vr_pos2.id = id_pos2
-        vr_pos2.info['MATEID'] = id_pos1
-
-        return vr_pos1, vr_pos2
+        return vr_bnd2
 
     ##################################################################
 
-    def _set_bnds_attributes(self):
+    def set_bnds_attributes(self):
         if self.is_sv:
             vr_svinfo = breakends_module.get_vr_svinfo_standard_vr(
                     self.vr, self.fasta, self.chromdict,
                     )
             self.is_bnd1 = vr_svinfo['is_bnd1']
             self.bnds = breakends_module.get_bnds_from_vr_svinfo(
-                    self.vr, vr_svinfo, self.fasta, self.chromdict,
-                    )
+                self.vr, vr_svinfo, self.fasta, self.chromdict)
         else:
             self.is_bnd1 = None
             self.bnds = None
@@ -263,3 +264,10 @@ class VariantPlus:
 
         return VEPannot_list
 
+
+def get_vp_sortkey(chromdict):
+    vr_sortkey = common.get_vr_sortkey(chromdict)
+    def vp_sortkey(vp):
+        return vr_sortkey(vp.vr)
+
+    return vp_sortkey

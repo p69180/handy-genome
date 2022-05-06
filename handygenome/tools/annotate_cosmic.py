@@ -12,6 +12,7 @@ workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
 annotationdb = importlib.import_module('.'.join([top_package_name, 'annotation', 'annotationdb']))
 split = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'split']))
 concat = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'concat']))
+indexing = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'indexing']))
 
 
 def unit_job(
@@ -56,6 +57,7 @@ def argument_parser(cmdargs):
             default_sched = 'slurm',
             )
     workflow.add_rmtmp_arg(parser_dict)
+    workflow.add_index_arg(parser_dict)
 
     args = parser_dict['main'].parse_args(cmdargs)
     sanity_check(args)
@@ -64,11 +66,10 @@ def argument_parser(cmdargs):
 
 
 def make_tmpdir(infile_path):
-    tmpdir_paths = common.get_tmpdir_paths(
-            ['scripts', 'logs', 'split_infiles', 'split_outfiles'], 
-            prefix = os.path.basename(infile_path) + '_annotate_cosmic',
-            where = os.path.dirname(infile_path),
-            )
+    tmpdir_paths = workflow.get_tmpdir_paths(
+        ['scripts', 'logs', 'split_infiles', 'split_outfiles'], 
+        prefix=(os.path.basename(infile_path) + '_annotate_cosmic'),
+        where=os.path.dirname(infile_path))
 
     return tmpdir_paths
 
@@ -176,8 +177,10 @@ def main(cmdargs):
 
     concat_results(split_outfile_names, args.outfile_path, args.mode_pysam)
 
-    if not args.dont_rm_tmp:
+    if not args.donot_rm_tmp:
         shutil.rmtree(tmpdir_paths['top'])
+    if not args.donot_index:
+        indexing.index_vcf(args.outfile_path)
 
     logger.info('ALL SUCCESSFULLY FINISHED')
 

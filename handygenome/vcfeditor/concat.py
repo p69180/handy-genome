@@ -34,11 +34,14 @@ def sanity_check_headers(infile_path_list):
 
     # check samples
     if len(set(samples_list)) != 1:
-        raise Exception(f'Headers of input vcf files are different in samples (orders must match)')
+        raise Exception(f'Headers of input vcf files are different in '
+                        'samples (orders must match)')
     elif len(set(infokeys_list)) != 1:
-        raise Exception(f'Headers of input vcf files are different in INFO keys')
+        raise Exception(f'Headers of input vcf files are different in '
+                        'INFO keys')
     elif len(set(formatkeys_list)) != 1:
-        raise Exception(f'Headers of input vcf files are different in FORMAT keys')
+        raise Exception(f'Headers of input vcf files are different in '
+                        'FORMAT keys')
 
 
 def write_outfile(infile_path_list, outfile_path, mode_pysam):

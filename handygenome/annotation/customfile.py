@@ -1,12 +1,14 @@
 import os
 import warnings
 import re
+import logging
 
 import pysam
 
 import importlib
 top_package_name = __name__.split('.')[0]
 common = importlib.import_module('.'.join([top_package_name, 'common']))
+workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
 infoformat = importlib.import_module('.'.join([top_package_name, 'variantplus', 'infoformat']))
 equivalents = importlib.import_module('.'.join([top_package_name, 'variantplus', 'equivalents']))
 varianthandler = importlib.import_module('.'.join([top_package_name, 'variantplus', 'varianthandler']))
@@ -17,95 +19,102 @@ ensembl_parser = importlib.import_module('.'.join([top_package_name, 'annotation
 DEFAULT_FETCHWIDTH = 10
 
 PAT_GENESET_ID = re.compile('ID=(?P<type>[^:]+):(?P<id>[^;]+)')
-    # type: CDS, gene, transcript (obtained from: zcat geneset_gff3_sorted.gz | awk '{if ($9 ~ /ID=([^:]+):/) {print gensub(/^.*ID=([^:]+):.*$/, "\\1", "g", $9)}}' | sort | uniq)
+    #   type: CDS, gene, transcript (obtained from: 
+    #        zcat geneset_gff3_sorted.gz | 
+    #            awk '
+    #            {
+    #                if ($9 ~ /ID=([^:]+):/) {
+    #                    print gensub(/^.*ID=([^:]+):.*$/, "\\1", "g", $9)
+    #                }
+    #            }' | 
+    #            sort | uniq)
 PAT_GENESET_PARENT = re.compile('Parent=[^:]+:(?P<id>[^;]+)')
-
 PAT_REGULATORY_ID = re.compile('(.+;)?id=([^;]+)(;.+)?')
 
 
 # VCF
 
-
 class NoVcfIndexError(Exception):
     pass
 
 
-def fetch_relevant_vr(vcfspec, vcf, fasta = None, search_equivs = True):
+def fetch_relevant_vr(vcfspec, vcf, fasta=None, search_equivs=True,
+                      allow_multiple=False):
     """
     Args:
+        vcfsepc: Must be monoallelic.
+        vcf: pysam.VariantFile object
         fasta: Not required when 'search_equivs' is False
         search_equivs: If True, all equivalent forms are fetched. If False, 
             only vrs with identical chrom, pos, ref, alt are fetched.
     """
 
-    assert not ((fasta is None) and search_equivs), \
-        f'If "search_equivs" is True, "fasta" must be given.'
+    assert not ((fasta is None) and search_equivs), (
+        f'If "search_equivs" is True, "fasta" must be given.')
+    assert len(vcfspec.alts) == 1, (
+        f'Argument "vcfspec" must be monoallelic.')
 
     def search_equivalents(vcfspec, vcf, fasta):
-        mttype = common.get_mttype(vcfspec.ref, vcfspec.alt)
-
-        if mttype in ('ins', 'del'):
-            equivs = equivalents.indel_equivalents(vcfspec, fasta)
-            poslist = [x.pos for x in equivs]
-            try:
-                fetchresult = vcf.fetch(contig = vcfspec.chrom, 
-                                        start = poslist[0] - 1,
-                                        end = poslist[-1])
-            except ValueError as e:
-                warnings.warn(f'{__name__}.fetch_relevant_vr: {str(e)}')
-                relevant_vr_candidates = list()
+        if vcfspec.chrom in vcf.header.contigs:
+            mttype = vcfspec.get_mttype_firstalt()
+            if mttype in ('ins', 'del'):
+                equivs = equivalents.indel_equivalents(vcfspec, fasta)
+                poslist = [x.pos for x in equivs]
+                fetchresult = vcf.fetch(contig=vcfspec.chrom, 
+                                        start=(poslist[0] - 1),
+                                        end=poslist[-1])
+                relevant_vr_candidates = list(
+                    filter(lambda vr: varianthandler.get_vcfspec(vr) in equivs,
+                           fetchresult))
             else:
-                relevant_vr_candidates = list(filter(
-                    lambda vr: varianthandler.get_vcfspec(vr) in equivs,
-                    fetchresult))
+                relevant_vr_candidates = search_identical(vcfspec, vcf)
         else:
-            relevant_vr_candidates = search_identical(vcfspec, vcf)
+            relevant_vr_candidates = list()
 
         return relevant_vr_candidates
 
     def search_identical(vcfspec, vcf):
-        try:
-            fetchresult = vcf.fetch(contig = vcfspec.chrom,
-                                    start = vcfspec.pos - 1,
-                                    end = vcfspec.pos)
-        except ValueError as e:
-            warnings.warn(f'{__name__}.fetch_relevant_vr: {str(e)}')
-            relevant_vr_candidates = list()
+        if vcfspec.chrom in vcf.header.contigs:
+            fetchresult = vcf.fetch(contig=vcfspec.chrom,
+                                    start=(vcfspec.pos - 1), end=vcfspec.pos)
+            relevant_vr_candidates = list(
+                filter(lambda vr: varianthandler.get_vcfspec(vr) == vcfspec,
+                       fetchresult))
         else:
-            relevant_vr_candidates = list(filter(
-                lambda vr: varianthandler.get_vcfspec(vr) == vcfspec,
-                fetchresult))
+            relevant_vr_candidates = list()
     
         return relevant_vr_candidates
 
-    def get_relevant_vr(relevant_vr_candidates):
+    def get_relevant_vr(relevant_vr_candidates, allow_multiple):
         if len(relevant_vr_candidates) == 0:
             relevant_vr = None
         elif len(relevant_vr_candidates) == 1:
             relevant_vr = relevant_vr_candidates[0]
         else:
-            e_msg = list()
-            e_msg.append(f'There are more than one relevant variant records:')
-            for vr in relevant_vr_candidates:
-                e_msg.append(vr.to_string())
-            raise Exception('\n'.join(e_msg))
+            if allow_multiple:
+                relevant_vr = relevant_vr_candidates[0]
+            else:
+                e_msg = list()
+                e_msg.append(f'There are more than one relevant variant '
+                             f'records:')
+                for vr in relevant_vr_candidates:
+                    e_msg.append(str(vr))
+                raise Exception('\n'.join(e_msg))
 
         return relevant_vr
 
-    def main(vcfspec, vcf, fasta, search_equivs):
-        if vcf.index is None:
-            raise NoVcfIndexError(f'Input vcf is not indexed.')
+    # main
+    if vcf.index is None:
+        raise NoVcfIndexError(f'Input vcf is not indexed.')
 
-        if search_equivs:
-            relevant_vr_candidates = search_equivalents(vcfspec, vcf, fasta)
-        else:
-            relevant_vr_candidates = search_identical(vcfspec, vcf)
+    if search_equivs:
+        relevant_vr_candidates = search_equivalents(vcfspec, vcf, fasta)
+    else:
+        relevant_vr_candidates = search_identical(vcfspec, vcf)
 
-        relevant_vr = get_relevant_vr(relevant_vr_candidates)
+    relevant_vr = get_relevant_vr(relevant_vr_candidates, allow_multiple)
 
-        return relevant_vr
-
-    return main(vcfspec, vcf, fasta, search_equivs)
+    return relevant_vr
 
 
 def fetch_relevant_vr_vcfpath(vcfspec, vcf_path, fasta=None, 
@@ -134,14 +143,16 @@ def parse_transcript_tabixline(tabixline):
 
     ensembl_parser.set_feature_type(annotitem, 'transcript')
     annotitem['biotype'] = attrs_parsed['biotype']
-    ensembl_parser.set_transcript_subtypes(annotitem, annotitem['biotype'], annotitem['id'])
+    ensembl_parser.set_transcript_subtypes(annotitem, annotitem['biotype'], 
+                                           annotitem['id'])
 
     if tabixline.strand == '+':
         annotitem['is_forward'] = True
     elif tabixline.strand == '-':
         annotitem['is_forward'] = False
     else:
-        raise Exception(f'Unexpected transcript tabixline strand value: "{tabixline.strand}"')
+        raise Exception(f'Unexpected transcript tabixline strand value: '
+                        f'"{tabixline.strand}"')
 
     annotitem['chrom'] = tabixline.contig
     annotitem['start0'] = tabixline.start
@@ -149,23 +160,42 @@ def parse_transcript_tabixline(tabixline):
     annotitem['end0'] = tabixline.end
     annotitem['end1'] = annotitem['end0']
 
-    annotitem['transcript_name'] = attrs_parsed['Name']
+    if 'Name' in attrs_parsed:
+        annotitem['transcript_name'] = attrs_parsed['Name']
+    else:
+        annotitem['transcript_name'] = None
+
     annotitem['gene_id'] = attrs_parsed['Parent'].split(':')[1]
 
     return annotitem
 
 
 def fetch_transcript(chrom, start0, end0, tabixfile_geneset):
+    """Returns an empty AnnotItemDict object if the tabixfile does not 
+    contain chrom.
+    """
+
     transcript_dict = annotationdb.AnnotItemDict()
-    for tabixline in tabixfile_geneset.fetch(chrom, start0, end0):
-        if check_tabixline_type_transcript(tabixline):
-            annotitem = parse_transcript_tabixline(tabixline)
-            transcript_dict[annotitem['id']] = annotitem
+    if chrom in tabixfile_geneset.contigs:
+        try:
+            fetchresult = tabixfile_geneset.fetch(chrom, start0, end0)
+        except Exception as e:
+            raise Exception(f'tabixfile fetch failed: chrom: {chrom}, '
+                            f'start0: {start0}, end0: {end0}') from e
+            
+        for tabixline in fetchresult:
+            if check_tabixline_type_transcript(tabixline):
+                annotitem = parse_transcript_tabixline(tabixline)
+                transcript_dict[annotitem['id']] = annotitem
 
     return transcript_dict
 
 
-def fetch_transcript_tabixline(chrom, start0, end0, transcript_id_list, tabixfile_geneset):
+def fetch_transcript_tabixline(chrom, start0, end0, transcript_id_list, 
+                               tabixfile_geneset):
+    if chrom not in tabixfile_geneset.contigs:
+        raise Exception(f'chrom is not contained in the tabixfile.')
+
     candidates = list()
     fetched = tabixfile_geneset.fetch(chrom, start0, end0)
     for tabixline in fetched:
@@ -176,14 +206,17 @@ def fetch_transcript_tabixline(chrom, start0, end0, transcript_id_list, tabixfil
                     candidates.append(tabixline)
 
     if len(candidates) != len(transcript_id_list):
-        raise Exception(f'Unsuccessful transcript fetch: transcript_id_list: {transcript_id_list}, coords: ({chrom}, {start0}, {end0})')
+        raise Exception(f'Unsuccessful transcript fetch: '
+                        f'transcript_id_list: {transcript_id_list}, '
+                        f'coords: ({chrom}, {start0}, {end0})')
 
     return candidates
 
 
 def check_geneset_tabixline_type(tabixline, type):
-    assert type in ('gene', 'transcript', 'CDS', 'exon', 'UTR'), \
-        f"Allowed 'type' values are: 'gene', 'transcript', 'CDS', 'exon', 'UTR'"
+    assert type in ('gene', 'transcript', 'CDS', 'exon', 'UTR'), (
+        f'Allowed "type" values are: '
+        f'"gene", "transcript", "CDS", "exon", "UTR"')
 
     if type == 'exon':
         return tabixline.feature == 'exon'
@@ -238,16 +271,29 @@ def parse_repeat_tabixline(tabixline):
         raise Exception(f'Unexpected repeat name pattern: {tabixline.name}')
     annotitem['name'] = raw_split[1]
 
-    annotitem['id'] = f'{annotitem["name"]}_{tabixline.contig}_{tabixline.start}_{tabixline.end}'
+    annotitem['id'] = '_'.join([
+        annotitem["name"], tabixline.contig, 
+        str(tabixline.start), str(tabixline.end)])
 
     return annotitem
 
 
 def fetch_repeat(chrom, start0, end0, tabixfile_repeats):
+    """Returns an empty AnnotItemDict object if the tabixfile does not 
+    contain chrom.
+    """
+
     repeat_dict = annotationdb.AnnotItemDict()
-    for tabixline in tabixfile_repeats.fetch(chrom, start0, end0):
-        annotitem = parse_repeat_tabixline(tabixline)
-        repeat_dict[annotitem['id']] = annotitem
+    if chrom in tabixfile_repeats.contigs:
+        try:
+            fetchresult = tabixfile_repeats.fetch(chrom, start0, end0)
+        except Exception as e:
+            raise Exception(f'tabixfile fetch failed: chrom: {chrom}, '
+                            f'start0: {start0}, end0: {end0}') from e
+
+        for tabixline in fetchresult:
+            annotitem = parse_repeat_tabixline(tabixline)
+            repeat_dict[annotitem['id']] = annotitem
 
     return repeat_dict
 
@@ -279,7 +325,11 @@ def parse_regulatory_tabixline(tabixline):
     return annotitem
 
 
-def fetch_regulatory_tabixline(chrom, start0, end0, regulatory_id_list, tabixfile_regulatory):
+def fetch_regulatory_tabixline(chrom, start0, end0, regulatory_id_list, 
+                               tabixfile_regulatory):
+    if chrom not in tabixfile_regulatory.contigs:
+        raise Exception(f'chrom is not contained in the tabixfile.')
+
     candidates = list()
     fetched = tabixfile_regulatory.fetch(chrom, start0, end0)
     for tabixline in fetched:
@@ -288,16 +338,29 @@ def fetch_regulatory_tabixline(chrom, start0, end0, regulatory_id_list, tabixfil
             candidates.append(tabixline)
 
     if len(candidates) != len(regulatory_id_list):
-        raise Exception(f'Unsuccessful regulatory fetch: regulatory_id_list: {regulatory_id_list}, coords: ({chrom}, {start0}, {end0})')
+        raise Exception(f'Unsuccessful regulatory fetch: '
+                        f'regulatory_id_list: {regulatory_id_list}, '
+                        f'coords: ({chrom}, {start0}, {end0})')
 
     return candidates
 
 
 def fetch_regulatory(chrom, start0, end0, tabixfile_regulatory):
+    """Returns an empty AnnotItemDict object if the tabixfile does not 
+    contain chrom.
+    """
+
     regulatory_dict = annotationdb.AnnotItemDict()
-    for tabixline in tabixfile_regulatory.fetch(chrom, start0, end0):
-        annotitem = parse_regulatory_tabixline(tabixline)
-        regulatory_dict[annotitem['id']] = annotitem
+    if chrom in tabixfile_regulatory.contigs:
+        try:
+            fetchresult = tabixfile_regulatory.fetch(chrom, start0, end0)
+        except Exception as e:
+            raise Exception(f'tabixfile fetch failed: chrom: {chrom}, '
+                            f'start0: {start0}, end0: {end0}') from e
+
+        for tabixline in fetchresult:
+            annotitem = parse_regulatory_tabixline(tabixline)
+            regulatory_dict[annotitem['id']] = annotitem
 
     return regulatory_dict
 

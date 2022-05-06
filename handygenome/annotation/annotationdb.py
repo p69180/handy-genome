@@ -149,19 +149,15 @@ class AnnotDB:
         cosmic
     """
 
-    def __init__(self, annotdb_type, refver, fasta, vr=None):
+    def __init__(self, annotdb_type, refver, fasta, chromdict, vr=None):
         assert annotdb_type in ANNOTDB_TYPES, (
             f'annotdb_type must be one of: {ANNOTDB_TYPES}')
 
         self.annotdb_type = annotdb_type
         self.refver = refver
         #assert self.refver in ensembl_rest.REFVERS_ALLOWED
-
-        if fasta is None:
-            self.fasta = pysam.FastaFile(
-                common.DEFAULT_FASTA_PATHS[self.refver])
-        else:
-            self.fasta = fasta
+        self.fasta = fasta
+        self.chromdict = chromdict
 
         if vr is None:
             self.init_empty()
@@ -177,12 +173,9 @@ class AnnotDB:
         showdict['cosmic'] = dict(self.cosmic)
 
         showdict['transcript'] = self.transcript.get_showdict()
-        showdict['transcript_canonical'] = \
-            self.transcript_canonical.get_showdict()
         showdict['regulatory'] = self.regulatory.get_showdict()
         showdict['motif'] = self.motif.get_showdict()
         showdict['repeat'] = self.repeat.get_showdict()
-
 
         return showdict
 
@@ -192,7 +185,7 @@ class AnnotDB:
         self.motif = AnnotItemDict()
         self.repeat = AnnotItemDict()
 
-        self.set_transcript_canonical()
+        self.set_transcript_subsets()
 
         self.popfreq = Popfreq()
         self.cosmic = Cosmic()
@@ -207,7 +200,7 @@ class AnnotDB:
         self.repeat = AnnotItemDict(
             vr, infokey=INFOMETAS[self.annotdb_type]['repeat']['ID'])
 
-        self.set_transcript_canonical()
+        self.set_transcript_subsets()
 
         self.popfreq = Popfreq(
             vr, infokey=INFOMETAS[self.annotdb_type]['popfreq']['ID'])
@@ -242,18 +235,25 @@ class AnnotDB:
 
     def update_popfreq(self, vcfspec, dbsnp_vcf, search_equivs=True, 
                        overwrite=False):
-        assert self.annotdb_type == 'plain', \
-            f'This method is available only for annotdb_type "plain".'
-        dbsnp_vr = fetch_dbsnp_vr(vcfspec, dbsnp_vcf, self.fasta, 
-                                  search_equivs)
+        assert self.annotdb_type == 'plain', (
+            f'This method is available only for annotdb_type "plain".')
+
+        try:
+            dbsnp_vr = fetch_dbsnp_vr(vcfspec, dbsnp_vcf, self.fasta, 
+                                      search_equivs)
+        except Exception as e:
+            raise Exception(f'dbsnp VCF fetch failed: '
+                            f'vcfspec: {vcfspec}') from e
+
         self.popfreq.load_other(parse_dbsnp_vr(dbsnp_vr), overwrite=overwrite)
 
     # COSMIC #####################################################
 
     def update_cosmic(self, vcfspec, cosmic_coding_vcf, cosmic_noncoding_vcf,  
                       search_equivs=True, overwrite=False):
-        assert self.annotdb_type == 'plain', \
-            f'This method is available only for annotdb_type "plain".'
+        assert self.annotdb_type == 'plain', (
+            f'This method is available only for annotdb_type "plain".')
+
         cosmic_vr, cosmic_vr_noncoding = fetch_cosmic_vr(
             vcfspec, cosmic_coding_vcf, cosmic_noncoding_vcf, self.fasta, 
             search_equivs=search_equivs)
@@ -271,20 +271,20 @@ class AnnotDB:
 
         assert self.annotdb_type == 'plain'
 
-        mttype = common.get_mttype(vcfspec.ref, vcfspec.alt)
+        mttype = vcfspec.get_mttype_firstalt()
         assert mttype != 'sv', f'Input variant must not be an SV.'
 
         # update using customfiles
-        fetch_interval = common.Interval(chrom=vcfspec.chrom, 
-                                         start1=(vcfspec.pos - distance), 
-                                         end1=(vcfspec.pos + distance))
+        fetch_interval = common.Interval(
+            chrom=vcfspec.chrom, start1=max(1, vcfspec.pos - distance),
+            end1=min(self.chromdict[vcfspec.chrom], vcfspec.pos + distance))
         self.update_customfile_transcript(fetch_interval, tabixfile_geneset)
         self.update_customfile_regulatory(fetch_interval, tabixfile_regulatory)
         self.update_customfile_repeat(fetch_interval, tabixfile_repeats)
 
         # modifier
         self.modifier_for_plain(vcfspec, mttype)
-        self.set_transcript_canonical()
+        self.set_transcript_subsets()
 
     def update_features_postvep_interval(
             self, interval, tabixfile_geneset, tabixfile_regulatory, 
@@ -292,16 +292,16 @@ class AnnotDB:
         assert self.annotdb_type == 'plain'
 
         # update using customfiles
-        fetch_interval = common.Interval(chrom=interval.chrom, 
-                                         start1=(interval.start1 - distance),
-                                         end1=(interval.end1 + distance))
+        fetch_interval = common.Interval(
+            chrom=interval.chrom, start1=max(1, interval.start1 - distance),
+            end1=min(self.chromdict[interval.chrom], interval.end1 + distance))
         self.update_customfile_transcript(fetch_interval, tabixfile_geneset)
         self.update_customfile_regulatory(fetch_interval, tabixfile_regulatory)
         self.update_customfile_repeat(fetch_interval, tabixfile_repeats)
 
         # modifier
         self.modifier_for_interval(interval)
-        self.set_transcript_canonical()
+        self.set_transcript_subsets()
 
     def update_features_postvep_bnd(
             self, chrom, pos, endis5, tabixfile_geneset, tabixfile_regulatory, 
@@ -310,12 +310,12 @@ class AnnotDB:
 
         # update using customfiles
         if endis5:
-            fetch_interval = common.Interval(chrom=chrom, start1=pos, 
-                                             end1=(pos + distance))
+            fetch_interval = common.Interval(
+                chrom=chrom, start1=pos, 
+                end1=min(self.chromdict[chrom], pos + distance))
         else:
-            fetch_interval = common.Interval(chrom=chrom, 
-                                             start1=(pos - distance), 
-                                             end1=pos)
+            fetch_interval = common.Interval(
+                chrom=chrom, start1=max(1, pos - distance), end1=pos)
 
         self.update_customfile_transcript(fetch_interval, tabixfile_geneset)
         self.update_customfile_regulatory(fetch_interval, tabixfile_regulatory)
@@ -323,7 +323,7 @@ class AnnotDB:
 
         # modifier
         self.modifier_for_bnd(pos, endis5)
-        self.set_transcript_canonical()
+        self.set_transcript_subsets()
 
     # ensembl rest wrappers
 
@@ -333,7 +333,7 @@ class AnnotDB:
         """To be run with non-SV variants"""
 
         assert self.annotdb_type == 'plain'
-        mttype = common.get_mttype(vcfspec.ref, vcfspec.alt)
+        mttype = vcfspec.get_mttype_firstalt()
         assert mttype != 'sv', f'Input variant must not be an SV.'
 
         if vep:
@@ -346,7 +346,7 @@ class AnnotDB:
             self.update_ensembl_rest_regulatory()
 
         self.modifier_for_plain(vcfspec, mttype)
-        self.set_transcript_canonical()
+        self.set_transcript_subsets()
 
     def update_features_ensembl_wrapper_interval(
             self, interval, distance=veplib.DEFAULT_DISTANCE,
@@ -363,7 +363,7 @@ class AnnotDB:
             self.update_ensembl_rest_regulatory()
 
         self.modifier_for_interval(interval)
-        self.set_transcript_canonical()
+        self.set_transcript_subsets()
 
     def update_features_bnd(
             self, chrom, pos, endis5, distance=veplib.DEFAULT_DISTANCE,
@@ -380,7 +380,7 @@ class AnnotDB:
             self.update_ensembl_rest_regulatory()
 
         self.modifier_for_bnd(pos, endis5)
-        self.set_transcript_canonical()
+        self.set_transcript_subsets()
 
 
     # FEATURE UPDATE MODIFIERS ##########################################
@@ -398,9 +398,9 @@ class AnnotDB:
                 if 'distance' not in annotitem: 
                     # annotitems derived from "ensembl rest overlap" 
                     #   do not have "distance" value
-                    assert 'start0' in annotitem and 'end0' in annotitem, \
-                        (f'"start0" and "end0" values are not set for this '
-                         f'AnnotItem object:\n{annotitem}')
+                    assert 'start0' in annotitem and 'end0' in annotitem, (
+                        f'"start0" and "end0" values are not set for this '
+                        f'AnnotItem object:\n{annotitem}')
                     feature_range0 = range(annotitem['start0'], 
                                            annotitem['end0'])
                     annotitem['distance'] = distance_setter(feature_range0)
@@ -460,8 +460,11 @@ class AnnotDB:
             distance_setter = self.get_distance_setter_snv(vcfspec)
         elif mttype == 'ins':
             distance_setter = self.get_distance_setter_ins(vcfspec)
-        else: # del or cindel
+        elif mttype in ('del', 'delins', 'mnv', 'cpgmet'):
             distance_setter = self.get_distance_setter_del(vcfspec)
+        else:
+            raise Exception(f'Unexpected mttype: {mttype}')
+
         self.set_missing_distances(distance_setter)
 
     # modifier for interval
@@ -582,7 +585,7 @@ FEATURE ON THE OTHER SIDE  = = = = = =     | = = = = = = = =  : FEATURE ON THE B
     def update_ensembl_rest_vep_plain(self, vcfspec,
                                       distance=veplib.DEFAULT_DISTANCE):
         self._update_ensembl_rest_vep_helper(
-            vcfspec = vcfspec, hgvsg = None, distance = distance)
+            vcfspec=vcfspec, hgvsg=None, distance=distance)
 
     def update_ensembl_rest_vep_interval(self, interval,
                                          distance=veplib.DEFAULT_DISTANCE):
@@ -595,7 +598,7 @@ FEATURE ON THE OTHER SIDE  = = = = = =     | = = = = = = = =  : FEATURE ON THE B
     def update_ensembl_rest_vep_bnd(self, chrom, pos,
                                     distance=veplib.DEFAULT_DISTANCE):
         ref = self.fasta.fetch(chrom, pos - 1, pos)
-        vcfspec = common.Vcfspec(chrom, pos, ref, 'N')
+        vcfspec = common.Vcfspec(chrom, pos, ref, ['N'])
         self._update_ensembl_rest_vep_helper(
             vcfspec=vcfspec, hgvsg=None, distance=distance)
 
@@ -610,18 +613,18 @@ FEATURE ON THE OTHER SIDE  = = = = = =     | = = = = = = = =  : FEATURE ON THE B
 
     def update_ensembl_rest_overlap_interval(self, interval, 
                                              distance=veplib.DEFAULT_DISTANCE):
-        new_interval = common.Interval(chrom=interval.chrom,
-                                       start1=(interval.start1 - distance),
-                                       end1=(interval.end1 + distance))
+        new_interval = common.Interval(
+            chrom=interval.chrom, start1=max(1, interval.start1 - distance),
+            end1=min(self.chromdict[interval.chrom], interval.end1 + distance))
         self._update_ensembl_rest_overlap_helper(new_interval)
 
     def update_ensembl_rest_overlap_bnd(self, chrom, pos, endis5, 
                                         distance=veplib.DEFAULT_DISTANCE):
         if endis5:
             start1 = pos
-            end1 = pos + distance
+            end1 = min(self.chromdict[chrom], pos + distance)
         else:
-            start1 = pos - distance
+            start1 = max(1, pos - distance)
             end1 = pos
         interval = common.Interval(chrom, start1, end1)
         self._update_ensembl_rest_overlap_helper(interval)
@@ -641,7 +644,12 @@ FEATURE ON THE OTHER SIDE  = = = = = =     | = = = = = = = =  : FEATURE ON THE B
 
     # cmdline VEP
     def update_cmdline_vep(self, vr, overwrite=True, create_new=True):
-        parsed = ensembl_parser.parse_cmdline_vep(vr)
+        try:
+            parsed = ensembl_parser.parse_cmdline_vep(vr)
+        except Exception as e:
+            raise Exception(f'VEP output variant record parsing '
+                            f'failed:\n{vr}') from e
+            
         self._load_ensembl_parsed(parsed, overwrite=overwrite, 
                                   create_new=create_new)
 
@@ -684,11 +692,19 @@ FEATURE ON THE OTHER SIDE  = = = = = =     | = = = = = = = =  : FEATURE ON THE B
 
     # FEATURE ADDITIONAL ATTRIBUTES GENERATION #####################
 
-    def set_transcript_canonical(self):
-        self.transcript_canonical = AnnotItemDict()
+    def set_transcript_subsets(self):
+        # canonical, overlap, both
+        self.transcript_canon = AnnotItemDict()
+        self.transcript_ovlp = AnnotItemDict()
+        self.transcript_canon_ovlp = AnnotItemDict()
+
         for ID, annotitem in self.transcript.items():
             if annotitem['is_canonical']:
-                self.transcript_canonical[ID] = annotitem
+                self.transcript_canon[ID] = annotitem
+            if annotitem['distance'] is None:
+                self.transcript_ovlp[ID] = annotitem
+            if annotitem['is_canonical'] and (annotitem['distance'] is None):
+                self.transcript_canon_ovlp[ID] = annotitem
 
     def set_exon_intron_ranges(self):
         def make_exon_ranges(annotitem):
@@ -763,7 +779,19 @@ class AnnotItem(dict):
 
     def __setitem__(self, key, val):
         self._setitem_sanitycheck(key, val)
-        super().__setitem__(key, val)
+        new_key, new_val = self._setitem_converter(key, val)
+        super().__setitem__(new_key, new_val)
+
+    def _setitem_converter(self, key, val):
+        # key
+        new_key = key
+        # val
+        if val == '3prime_overlapping_ncrna':
+            new_val = '3prime_overlapping_ncRNA'
+        else:
+            new_val = val
+
+        return new_key, new_val
 
     def _setitem_sanitycheck(self, key, val):
         try:
@@ -936,8 +964,9 @@ def fetch_dbsnp_vr(vcfspec, dbsnp_vcf, fasta, search_equivs=True):
     Result may be None
     """
 
-    dbsnp_vr = customfile.fetch_relevant_vr(vcfspec, dbsnp_vcf, fasta=fasta, 
-                                            search_equivs=search_equivs)
+    dbsnp_vr = customfile.fetch_relevant_vr(vcfspec, dbsnp_vcf, fasta=fasta,
+                                            search_equivs=search_equivs,
+                                            allow_multiple=True)
     
     return dbsnp_vr
 
@@ -1086,9 +1115,7 @@ def parse_cosmic_vr(cosmic_vr, cosmic_vr_noncoding):
                     if cosmic['id'] == cosmic_vr_noncoding.info['cosmic_ID']:
                         pass
                     else:
-                        vcfspec = common.Vcfsepc(
-                            cosmic_vr.chrom, cosmic_vr.pos, 
-                            cosmic_vr.ref, cosmic_vr.alts[0])
+                        vcfspec = varianthandler.get_vcfspec(cosmic_vr)
                         raise Exception(
                             f'Different COSV IDs between coding and '
                             f'noncoding databases for the same '
@@ -1097,3 +1124,4 @@ def parse_cosmic_vr(cosmic_vr, cosmic_vr_noncoding):
         return cosmic
 
     return main(cosmic_vr, cosmic_vr_noncoding)
+

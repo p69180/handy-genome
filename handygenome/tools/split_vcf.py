@@ -5,6 +5,7 @@ top_package_name = __name__.split('.')[0]
 common = importlib.import_module('.'.join([top_package_name, 'common']))
 workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
 split_module = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'split']))
+indexing = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'indexing']))
 
 
 def argument_parser(cmdargs):
@@ -14,17 +15,19 @@ def argument_parser(cmdargs):
             raise SystemExit(e_msg)  # this does not show traceback
 
     parser_dict = workflow.init_parser(description=textwrap.dedent("""\
-        Splits input vcf by either 'nfile' (number of output files) or 
-            'nline' (number of variant record lines each split file contains).
-        Split file names looks like: 
-            <prefix>000<suffix>, <prefix>001<suffix>, ...
-        Exactly one of '--nfile' or '--nline' options must be used.
+        - Splits input vcf by either 'nfile' (number of output files) or 
+          'nline' (number of variant record lines each split file contains).
+        - Split file names looks like: 
+          <prefix>000<suffix>, <prefix>001<suffix>, ...
+        - Exactly one of '--nfile' or '--nline' options must be used.
         """))
 
     workflow.add_infile_arg(parser_dict['required'], required=True)
     workflow.add_outdir_arg(parser_dict['required'], required=True)
     workflow.add_outfmt_arg(parser_dict['optional'], required=False, 
                             default='z')
+    workflow.add_index_arg(parser_dict)
+
     parser_dict['optional'].add_argument(
         '--nfile', dest='n_file', required=False, type=int,
         help=textwrap.dedent(f"""\
@@ -52,12 +55,10 @@ def argument_parser(cmdargs):
 
 def main(cmdargs):
     args = argument_parser(cmdargs)
-    split_module.main(
-        vcf_path=args.infile_path,
-        outdir=args.outdir_path,
-        n_file=args.n_file,
-        n_line=args.n_line,
-        mode_pysam=args.mode_pysam,
-        prefix=args.prefix,
-        suffix=args.suffix,
-        )
+    split_module.main(vcf_path=args.infile_path, outdir=args.outdir_path,
+                      n_file=args.n_file, n_line=args.n_line,
+                      mode_pysam=args.mode_pysam, prefix=args.prefix,
+                      suffix=args.suffix)
+
+    if not args.donot_index:
+        indexing.index_vcf(args.outfile_path)

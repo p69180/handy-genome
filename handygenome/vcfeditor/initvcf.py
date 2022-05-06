@@ -6,20 +6,22 @@ import pysam
 import importlib
 top_package_name = __name__.split('.')[0]
 common = importlib.import_module('.'.join([top_package_name, 'common']))
+varianthandler = importlib.import_module('.'.join([top_package_name, 'variantplus', 'varianthandler']))
 
 
-def write_empty_vcf(outfile_path, chromdict = None, samples = None, pysamhdr = None, vcfver = common.DEFAULT_VCFVER):
+def write_empty_vcf(outfile_path, chromdict=None, samples=None, pysamhdr=None, 
+                    vcfver=common.DEFAULT_VCFVER):
     """
     Args:
         outfile_path: Output vcf file path.
-        chromdict: Designed as a mandatory one since vcf header without contig metadata may result in segmentation fault with writing to a file.
+        chromdict: Designed as a mandatory one since vcf header without 
+            contig metadata may result in segmentation fault with writing 
+            to a file.
         samples: Iterable containing sample names.
-        pysamhdr: pysam.VariantHeader object. All metadata from this, except fileformat and contig, is used.
+        pysamhdr: pysam.VariantHeader object. All metadata from this, 
+            except fileformat and contig, is used.
         vcfver: Default 4.3
     """
-
-    #if chromdict is None:
-    #    warnings.warn('"chromdict" argument is not set.')
 
     with open(outfile_path, 'w') as outfile:
         outfile.write(f'##fileformat=VCFv{vcfver}\n') # fileformat
@@ -31,13 +33,16 @@ def write_empty_vcf(outfile_path, chromdict = None, samples = None, pysamhdr = N
         if pysamhdr is not None: # other metadata
             for hdr_rec in pysamhdr.records:
                 if chromdict is not None:
-                    if ( hdr_rec.type != 'CONTIG' ) and ( hdr_rec.key != 'fileformat' ):
+                    if (
+                            (hdr_rec.type != 'CONTIG') and 
+                            (hdr_rec.key != 'fileformat')):
                         outfile.write(str(hdr_rec))
                 else:
-                    if ( hdr_rec.key != 'fileformat' ):
+                    if hdr_rec.key != 'fileformat':
                         outfile.write(str(hdr_rec))
 
-        headerline = ['#CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 'INFO']
+        headerline = ['#CHROM', 'POS', 'ID', 'REF', 'ALT', 'QUAL', 'FILTER', 
+                      'INFO']
         if samples is not None:
             headerline.append('FORMAT')
             for sample in samples:
@@ -45,17 +50,21 @@ def write_empty_vcf(outfile_path, chromdict = None, samples = None, pysamhdr = N
         outfile.write('\t'.join(headerline) + '\n')
 
 
-def create_empty_pysamvcf(chromdict = None, samples = None, pysamhdr = None, vcfver = common.DEFAULT_VCFVER):
+def create_empty_pysamvcf(chromdict=None, samples=None, pysamhdr=None, 
+                          vcfver=common.DEFAULT_VCFVER):
     """
     Args:
         outfile_path: Output vcf file path.
-        chromdict: Designed as a mandatory one since vcf header without contig metadata may result in segmentation fault with writing to a file.
+        chromdict: Designed as a mandatory one since vcf header without 
+            contig metadata may result in segmentation fault with writing to 
+            a file.
         samples: Iterable containing sample names.
-        pysamhdr: pysam.VariantHeader object. All metadata from this, except fileformat and contig, is used.
+        pysamhdr: pysam.VariantHeader object. All metadata from this, except 
+            fileformat and contig, is used.
         vcfver: Default 4.3
     """
 
-    tf_path = common.get_tempfile_path(delete = False)
+    tf_path = workflow.get_tmpfile_path(delete=False)
     write_empty_vcf(tf_path, chromdict, samples, pysamhdr, vcfver)
     empty_vcf = pysam.VariantFile(tf_path, mode = 'r')
     os.remove(tf_path)
@@ -65,32 +74,15 @@ def create_empty_pysamvcf(chromdict = None, samples = None, pysamhdr = None, vcf
 
 ######################################
 
-
-def create_header_deprecated(chromdict = None, samples = None, header = None, vcfver = common.DEFAULT_VCFVER):
-    """
-    Args:
-        chromdict: Designed as a mandatory one since vcf header without contig metadata may result in segmentation fault with writing to a file.
-        samples: Iterable containing sample names.
-        header: pysam.VariantHeader object. All metadata from this, except fileformat and contig, is used.
-        vcfver: Default 4.3
-
-    Returns:
-        A pysam.VariantHeader object
-    """
-
-    empty_vcf = create_empty_pysamvcf(chromdict, samples, header, vcfver)
-    header = empty_vcf.header
-    empty_vcf.close()
-
-    return header
-
-
 def create_header(chromdict, samples=None, vcfheader=None):
     """
     Args:
-        chromdict: Designed as a mandatory one since vcf header without contig metadata may result in segmentation fault with writing to a file.
+        chromdict: Designed as a mandatory one since vcf header without 
+            contig metadata may result in segmentation fault with writing 
+            to a file.
         samples: An iterable containing sample names.
-        vcfheader: Another pysam.VariantHeader object. All metadata from this, except fileformat and contig, is used.
+        vcfheader: Another pysam.VariantHeader object. All metadata from 
+            this, except fileformat and contig, is used.
 
     Returns:
         A pysam.VariantHeader object
@@ -131,9 +123,7 @@ def create_vr(chromdict, vcfspec=None, end=None, samples=None,
         vr = hdr.new_record()
 
     if vcfspec is not None:
-        vr.contig = vcfspec.chrom
-        vr.pos = vcfspec.pos
-        vr.alleles = (vcfspec.ref, vcfspec.alt)
+        varianthandler.apply_vcfspec(vr, vcfspec)
 
     if end is not None:
         vr.stop = end

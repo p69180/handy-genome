@@ -10,12 +10,12 @@ top_package_name = __name__.split('.')[0]
 common = importlib.import_module('.'.join([top_package_name, 'common']))
 workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
 varianthandler = importlib.import_module('.'.join([top_package_name, 'variantplus', 'varianthandler']))
-headerhandler = importlib.import_module('.'.join([top_package_name, 'variantplus', 'headerhandler']))
+headerhandler = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'headerhandler']))
 
 
 def sanity_check_args(infile_path_list, outfile_path, isec, isec_indices,
                       outfile_must_not_exist):
-    infile_path_list = workflow.arghandler_infile_list(infile_path_list)
+    infile_path_list = workflow.arghandler_infilelist(infile_path_list)
 
     arghandler = workflow.get_arghandler_outfile(outfile_must_not_exist)
     outfile_path = arghandler(outfile_path)
@@ -52,10 +52,10 @@ def load_vcf_data(vcf_list):
     """
     Returns: 
         [
-            { vcfspec, vcfspec, ... },
-            { vcfspec, vcfspec, ... },
-            ...
-        ] (same length as len(infile_path_list)) 
+            {vcfspec, vcfspec, ... },
+            {vcfspec, vcfspec, ... },
+            ...,
+            ] (same length as len(infile_path_list)) 
     """
 
     raw_vcfspecs = list()
@@ -120,12 +120,16 @@ def get_output_vcfspecs_union(raw_vcfspecs, chromdict):
     return output_vcfspecs
 
 
-def reform_vr_dict(vr_dict, merged_header, output_vcfspecs):
+def reform_vr_dict(vr_dict, merged_header, output_vcfspecs, logger):
     merged_vr_dict = dict()
+    NR = 0
     for vcfspec in output_vcfspecs:
+        NR += 1
         merged_vr_dict[vcfspec] = varianthandler.merge(
             vr_dict[vcfspec], merged_header)
         del vr_dict[vcfspec]
+        if NR % 50_000 == 0:
+            logger.info(f'{NR:,} merged variant records created')
 
     return merged_vr_dict
 
@@ -178,10 +182,13 @@ def main_file(
         else:
             output_vcfspecs = get_output_vcfspecs_union(
                 raw_vcfspecs, chromdict)
+        logger.info(f'{len(output_vcfspecs):,} variant records are to be '
+                    f'written')
 
-        logger.info('Merging overlapping variant records')
+        logger.info('Merging overlapping variant records. '
+                    'This step may take a while.')
         merged_vr_dict = reform_vr_dict(vr_dict, merged_header, 
-                                        output_vcfspecs)
+                                        output_vcfspecs, logger)
 
         logger.info('Writing final result')
         write(merged_vr_dict, output_vcfspecs, outfile_path, mode_pysam, 
@@ -193,11 +200,11 @@ def main_file(
 
 #def main_vcfplus(vcfplus_list, isec=False, isec_indices=None, merge=True):
 #    #assert all(isinstance(x, vcfplus.VcfPlus) for x in vcfplus_list)
-#    def get_vp_list(output_vcfspecs, pysamvr_dict, fasta, chromdict):
+#    def get_vp_list(output_vcfspecs, vr_dict, fasta, chromdict):
 #        vp_list = list()
 #        for vcfspec in output_vcfspecs:
-#            for pysamvr in pysamvr_dict[vcfspec]:
-#                vp = variantplus.VariantPlus(pysamvr, fasta, chromdict)
+#            for vr in vr_dict[vcfspec]:
+#                vp = variantplus.VariantPlus(vr, fasta, chromdict)
 #                vp_list.append(vp)
 #
 #        return vp_list
@@ -210,8 +217,8 @@ def main_file(
 #    merged_header = merge_pysamhdr(vcfp.vcf.header for vcfp in vcfplus_list)
 #    raw_vcfspecs = load_vcf_data(vcf_list)
 #    output_vcfspecs = vcfmergelib.get_output_vcfspecs(raw_vcfspecs, isec, isec_indices_bool, chromdict)
-#    pysamvr_dict = vcfmergelib.get_pysamvr_dict(vcfplus_list, output_vcfspecs, merged_header, isec_indices_bool, merge)
-#    vp_list = get_vp_list(output_vcfspecs, pysamvr_dict, fasta, chromdict)
+#    vr_dict = vcfmergelib.get_vr_dict(vcfplus_list, output_vcfspecs, merged_header, isec_indices_bool, merge)
+#    vp_list = get_vp_list(output_vcfspecs, vr_dict, fasta, chromdict)
 #
 #    vcfp = vcfplus.VcfPlus(fasta = fasta)
 #    vcfp.set_header(header = merged_header)

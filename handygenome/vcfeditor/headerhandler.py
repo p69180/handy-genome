@@ -32,12 +32,20 @@ def add_structured(vcfheader, key, dic):
 ##################################
 
 
-def add_MATEID(vcfheader):
+def addmeta_MATEID(vcfheader):
     if 'MATEID' not in vcfheader.info:
         vcfheader.add_meta(
             key='INFO',
             items=[('ID', 'MATEID'), ('Type', 'String'), ('Number', 1),
                    ('Description', 'ID of mate breakends')])
+
+
+def addmeta_END(vcfheader):
+    if 'END' not in vcfheader.info:
+        vcfheader.add_meta(
+            key='INFO',
+            items=[('ID', 'END'), ('Type', 'Integer'), ('Number', 1),
+                   ('Description', 'End position on CHROM')])
 
 
 ##################################

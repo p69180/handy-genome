@@ -69,7 +69,7 @@ class Deletion(SimpleStructuralVariant):
 		ref = self.fasta.fetch(self.chrom, pos - 1, self.end0)
 		alt = ref[0]
 
-		return common.Vcfspec(self.chrom, pos, ref, alt)
+		return common.Vcfspec(self.chrom, pos, ref, [alt])
 			
 	def get_bnds(self):
 		return breakends.Breakends(
@@ -103,7 +103,7 @@ class TandemDuplication(SimpleStructuralVariant):
 		ref = fetched[0]
 		alt = fetched
 
-		return common.Vcfspec(self.chrom, pos, ref, alt)
+		return common.Vcfspec(self.chrom, pos, ref, [alt])
 
 
 class Inversion(SimpleStructuralVariant):
@@ -128,5 +128,5 @@ class Inversion(SimpleStructuralVariant):
 			ref = fetched
 			alt = Bio.Seq.reverse_complement(fetched)
 
-		return common.Vcfspec(self.chrom, pos, ref, alt)
+		return common.Vcfspec(self.chrom, pos, ref, [alt])
 
