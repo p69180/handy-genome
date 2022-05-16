@@ -8,6 +8,7 @@ import logging
 import uuid
 import textwrap
 import itertools
+import tempfile
 
 import importlib
 top_package_name = __name__.split('.')[0]

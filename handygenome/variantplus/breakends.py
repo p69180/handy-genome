@@ -1,5 +1,6 @@
 import itertools
 import logging
+import functools
 
 import Bio.Seq
 
@@ -21,8 +22,6 @@ LOGGER = workflow.get_logger(
 class Breakends:
     """
     Attributes:
-        fasta: pysam.FastaFile instance
-        chromdict: julib.common.ChromDict instance
         chrom_bnd1
         pos_bnd1
         endis5_bnd1
@@ -34,15 +33,19 @@ class Breakends:
                 (e.g. ['A', 'A', 'G', 'C'])
             - As seen in the viewpoint where bnd1-side sequence is on 
                 the plus(Crick) strand
+
+        fasta: pysam.FastaFile instance
+        chromdict: julib.common.ChromDict instance
         svtype
         score
-        equivs: A list of Breakends objects with maximum reference coverage.
-        pos_range0_bnd1
-        pos_range0_bnd2
-        bnd1adv_form = None
-        bnd2adv_form = None
-        homlen = None
-        homseq = None
+        endis3_bnd1
+        endis3_bnd2
+
+        _equivs: A list of Breakends objects with maximum reference coverage.
+        _pos_range0_bnd1
+        _pos_range0_bnd2
+        _homlen = None
+        _homseq = None
     """
 
     BASIC_ATTRS = ('chrom_bnd1', 'pos_bnd1', 'endis5_bnd1', 
@@ -68,6 +71,10 @@ class Breakends:
         else:
             self.chromdict = chromdict
 
+        # endis3
+        self.endis3_bnd1 = (not self.endis5_bnd1)
+        self.endis3_bnd2 = (not self.endis5_bnd2)
+
         # svtype
         if svtype is None:
             self._set_svtype()
@@ -80,14 +87,12 @@ class Breakends:
         else:
             self.score = score
 
-        # equivs and dependent attributes
-        self.equivs = None
-        self.bnd1adv_form = None
-        self.bnd2adv_form = None
-        self.homlen = None
-        self.homseq = None
-        self.pos_range0_bnd1 = None
-        self.pos_range0_bnd2 = None
+        # private attributes accesible with getters
+        self._equivs = None
+        self._homlen = None
+        self._homseq = None
+        self._pos_range0_bnd1 = None
+        self._pos_range0_bnd2 = None
 
     def __repr__(self):
         def func1(self):
@@ -106,7 +111,7 @@ class Breakends:
             str2 = f'{brkt2}{self.chrom_bnd2}:{self.pos_bnd2}{brkt2}'
             insseq = ''.join(self.inserted_seq)
 
-            return f'<Breakends {str1} {insseq} {str2}>'
+            return f'<Breakends {str1} {insseq} {str2} (1-based coords)>'
 
         def func3(self):
             endtype1 = '5\'' if self.endis5_bnd1 else '3\''
@@ -145,6 +150,16 @@ class Breakends:
         return hash(self) == hash(other)
 
     ###########################################
+
+    def get_params(self, is_bnd1):
+        if is_bnd1:
+            return (self.chrom_bnd1, 
+                    self.get_pos_range0_bnd1(),
+                    self.endis5_bnd1)
+        else:
+            return (self.chrom_bnd2,
+                    self.get_pos_range0_bnd2(),
+                    self.endis5_bnd2)
 
     def get_vcfspec_bnd1(self):
         chrom = self.chrom_bnd1
@@ -218,23 +233,109 @@ class Breakends:
     def get_hgvsg(self):
         return self.get_simplesv().get_hgvsg()
 
+    def get_id(self):
+        return '_'.join([self.chrom_bnd1,
+                         str(self.pos_bnd1),
+                         self.chrom_bnd2,
+                         str(self.pos_bnd2)])
+
     def get_id_bnd1(self):
-        return (f'{self.chrom_bnd1}_{self.pos_bnd1}_'
-                f'{self.chrom_bnd2}_{self.pos_bnd2}_1')
+        return self.get_id() + '_1'
 
     def get_id_bnd2(self):
-        return (f'{self.chrom_bnd1}_{self.pos_bnd1}_'
-                f'{self.chrom_bnd2}_{self.pos_bnd2}_2')
+        return self.get_id() + '_2'
+
+    ###########################################
+
+    @functools.cache
+    def get_border_seq(self, is_bnd1):
+        (chrom, pos_range0, endis5) = self.get_params(is_bnd1=is_bnd1)
+        fetch_start = min(pos_range0)
+        fetch_end = max(pos_range0) + 1
+        return self.fasta.fetch(chrom, fetch_start, fetch_end)
+
+    @functools.cache
+    def get_seq_beyond_bnd_ref(self, is_bnd1, length, with_border_seq):
+        (chrom, pos_range0, endis5) = self.get_params(is_bnd1=is_bnd1)
+        if endis5:
+            fetch_end0 = min(pos_range0)
+            fetch_start0 = fetch_end0 - length
+        else:
+            fetch_start0 = pos_range0.stop
+            fetch_end0 = fetch_start0 + length
+
+        seq_beyond = self.fasta.fetch(chrom, fetch_start0, fetch_end0)
+
+        if with_border_seq:
+            border_seq = self.get_border_seq(is_bnd1)
+            if endis5:
+                return seq_beyond + border_seq
+            else:
+                return border_seq + seq_beyond
+        else:
+            return seq_beyond
+
+    @functools.cache
+    def get_seq_beyond_bnd_alt(self, is_bnd1, length, with_border_seq):
+        # get parameters
+        endis5 = self.endis5_bnd1 if is_bnd1 else self.endis5_bnd2
+        (chrom_mate, pos_range0_mate, endis5_mate) = self.get_params(
+            is_bnd1=(not is_bnd1))
+        fetch_length = length - len(self.inserted_seq)
+
+        # fetch_start, fetch_end
+        if endis5_mate:
+            fetch_start = pos_range0_mate.start
+            fetch_end = fetch_start + fetch_length
+        else:
+            fetch_end = pos_range0_mate.start + 1
+            fetch_start = fetch_end - fetch_length
+
+        # mateside_seq
+        if endis5 == endis5_mate:
+            mateside_seq = Bio.Seq.reverse_complement(
+                self.fasta.fetch(chrom_mate, fetch_start, fetch_end))
+        else:
+            mateside_seq = self.fasta.fetch(chrom_mate, fetch_start,
+                                            fetch_end)
+
+        # inserted_seq
+        if is_bnd1:
+            inserted_seq = ''.join(self.inserted_seq)
+        else:
+            if endis5 == endis5_mate:
+                inserted_seq = Bio.Seq.reverse_complement(
+                    ''.join(self.inserted_seq))
+            else:
+                inserted_seq = ''.join(self.inserted_seq)
+
+        # result
+        if endis5:
+            seq_beyond = mateside_seq + inserted_seq
+        else:
+            seq_beyond = inserted_seq + mateside_seq
+
+        # add border_seq
+        if with_border_seq:
+            border_seq = self.get_border_seq(is_bnd1)
+            if endis5:
+                return seq_beyond + border_seq
+            else:
+                return border_seq + seq_beyond
+        else:
+            return seq_beyond
+
+        return result
 
     ###########################################
 
     def set_equivs(self):
-        self.equivs = get_bnds_equivalents(self)
+        self._equivs = get_bnds_equivalents(self)
 
     def get_equivs(self):
-        if self.equivs is None:
+        if self._equivs is None:
             self.set_equivs()
-        return self.equivs
+        return self._equivs
 
     def get_sorted_equivs(self, mode):
         return sort_equivs(self.get_equivs(), mode)
@@ -248,20 +349,100 @@ class Breakends:
             poslist0_bnd1.append(bnds.pos_bnd1 - 1)
             poslist0_bnd2.append(bnds.pos_bnd2 - 1)
 
-        self.pos_range0_bnd1 = range(min(poslist0_bnd1),
-                                     max(poslist0_bnd1) + 1)
-        self.pos_range0_bnd2 = range(min(poslist0_bnd2),
-                                     max(poslist0_bnd2) + 1)
+        if self.endis5_bnd1:
+            self._pos_range0_bnd1 = range(max(poslist0_bnd1),
+                                          min(poslist0_bnd1) - 1,
+                                          -1)
+        else:
+            self._pos_range0_bnd1 = range(min(poslist0_bnd1),
+                                          max(poslist0_bnd1) + 1,
+                                          1)
+
+        if self.endis5_bnd2:
+            self._pos_range0_bnd2 = range(max(poslist0_bnd2),
+                                          min(poslist0_bnd2) - 1,
+                                          -1)
+        else:
+            self._pos_range0_bnd2 = range(min(poslist0_bnd2),
+                                          max(poslist0_bnd2) + 1,
+                                          1)
 
     def get_pos_range0_bnd1(self):
-        if self.pos_range0_bnd1 is None:
+        """Returns a directional range"""
+
+        if self._pos_range0_bnd1 is None:
             self.set_pos_range0s()
-        return self.pos_range0_bnd1
+        return self._pos_range0_bnd1
 
     def get_pos_range0_bnd2(self):
-        if self.pos_range0_bnd2 is None:
+        """Returns a directional range"""
+
+        if self._pos_range0_bnd2 is None:
             self.set_pos_range0s()
-        return self.pos_range0_bnd2
+        return self._pos_range0_bnd2
+
+    @functools.cache
+    def get_flank_range0(self, mode, is_bnd1, flanklen):
+        """Args:
+            mode: Must be one of "par", "bnd_prox", or "bnd_dist".
+                par: partner side
+                bnd_prox: breakend side, proximal (adjacent to the most 
+                    advanced border)
+                bnd_dist: breakend side, distal (adjacent to the most 
+                    retracted border)
+        """
+        assert mode in ('par', 'bnd_prox', 'bnd_dist')
+
+        # modify flanklen for breakend-side flanks
+        if mode in ('bnd_prox', 'bnd_dist'):
+            flanklen = flanklen - 1
+
+        # get parameters
+        pos_range0 = (self.get_pos_range0_bnd1()
+                      if is_bnd1 else
+                      self.get_pos_range0_bnd2())
+
+        # main
+        step = pos_range0.step
+
+        if mode == 'par':
+            start = pos_range0.stop
+            stop = start + (step * flanklen)
+        else:
+            if mode == 'bnd_prox':
+                stop = pos_range0.stop - step
+            elif mode == 'bnd_dist':
+                stop = pos_range0.start
+
+            start = stop + (-step * flanklen)
+
+        return range(start, stop, step)
+
+#    @functools.cache
+#    def get_parflank_range0_bnd1(self, flanklen=1):
+#        return self._get_flankrange_helper(mode='par', is_bnd1=True,
+#                                           flanklen=flanklen)
+#
+#    @functools.cache
+#    def get_parflank_range0_bnd2(self, flanklen=1):
+#        return self._get_flankrange_helper(mode='par', is_bnd1=False,
+#                                           flanklen=flanklen)
+#
+#    @functools.cache
+#    def get_bndproxflank_range0_bnd1(self, flanklen=1):
+#        """Returns a directional range"""
+#
+#        return self._get_flankrange_helper(mode='bnd_prox', is_bnd1=True,
+#                                           flanklen=(flanklen-1))
+#
+#    @functools.cache
+#    def get_bndsideflank_range0_bnd2(self, flanklen=1):
+#        """Returns a directional range"""
+#
+#        return self._get_flankrange_helper(mode=False, is_bnd1=False,
+#                                           flanklen=(flanklen-1))
+
+    ###################################################################
 
     def get_bnd1adv_form(self):
         return pick_bnd1adv_form(self.get_equivs())
@@ -270,17 +451,18 @@ class Breakends:
         return pick_bnd2adv_form(self.get_equivs())
 
     def set_microhomologies(self):
-        (self.homlen, self.homseq) = get_microhomology_spec(self.get_equivs())
+        (self._homlen, 
+         self._homseq) = get_microhomology_spec(self.get_equivs())
 
     def get_homlen(self):
-        if self.homlen is None:
+        if self._homlen is None:
             self.set_microhomologies()
-        return self.homlen
+        return self._homlen
 
     def get_homseq(self):
-        if self.homseq is None:
+        if self._homseq is None:
             self.set_microhomologies()
-        return self.homseq
+        return self._homseq
     
     ###################################################################
 

@@ -20,7 +20,7 @@ class IGV:
         
     def goto(self, loci, width=500):
         assert isinstance(loci, (list, tuple)), (
-            f'"loci" argument must be a list or tuple.')
+            f'"loci" argument must be a list or a tuple.')
 
         cmd_src = list()
         for locus in loci:
@@ -48,6 +48,9 @@ class IGV:
         self.cmd(f'goto {" ".join(cmd_src)}')
 
     def load(self, filepaths):
+        assert isinstance(filepaths, (list, tuple)), (
+            f'"filepaths" argument must be a list or a tuple.')
+
         for filepath in filepaths:
             self.cmd(f'load {filepath}')
     

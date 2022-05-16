@@ -353,9 +353,10 @@ class ChromDict(collections.OrderedDict):
             for chrom, length in zip(wrapper.references, wrapper.lengths):
                 self[chrom] = length
     
-            if ((fasta_path is not None) or 
-                (bam_path is not None) or 
-                (refver is not None)):
+            if (
+                    (fasta_path is not None) or 
+                    (bam_path is not None) or 
+                    (refver is not None)):
                 wrapper.close()
 
         # set contigs, lengths
@@ -371,6 +372,7 @@ class Vcfspec:
 
         self.chrom = chrom
         self.pos = pos
+        self.pos0 = pos - 1
         self.ref = ref
         self.alts = tuple(alts)
 
@@ -383,28 +385,10 @@ class Vcfspec:
                 f'{self.ref}>{altstring})>')
 
     def get_id(self):
-        return '_'.join([self.chrom, str(self.pos), self.ref, 
+        return '_'.join([self.chrom, 
+                         str(self.pos), 
+                         self.ref, 
                          '|'.join(self.alt)])
-
-    def get_preflank_range0(self, idx=0, flanklen=1):
-        assert flanklen >= 1, f'"flanklen" argument must be at least 1.'
-
-        if self.alts[idx][0] == self.ref[0]:
-            rightbefore0 = self.pos - 1
-        else:
-            rightbefore0 = self.pos - 2
-        preflank_range0 = range(rightbefore0 - (flanklen - 1), 
-                                rightbefore0 + 1)
-
-        return preflank_range0
-
-    def get_postflank_range0(self, flanklen=1):
-        assert flanklen >= 1, f'"flanklen" argument must be at least 1.'
-
-        rightafter0 = self.pos - 1 + len(self.ref)
-        postflank_range0 = range(rightafter0, rightafter0 + flanklen)
-
-        return postflank_range0
 
     def get_mutation_type(self, idx=0):
         return get_mttype(self.ref, self.alts[idx])
@@ -417,6 +401,25 @@ class Vcfspec:
 
     def __hash__(self):
         return hash(self.get_tuple())
+
+    ### ranges
+    def get_REF_range0(self):
+        return range(self.pos0, self.pos0 + len(self.ref))
+
+    @functools.cache
+    def get_preflank_range0(self, idx=0, flanklen=1):
+        assert flanklen >= 1, f'"flanklen" argument must be at least 1.'
+
+        if self.alts[idx][0] == self.ref[0]:
+            flanklen = flanklen - 1
+        return range(self.pos0 - flanklen, self.pos0)
+
+    @functools.cache
+    def get_postflank_range0(self, flanklen=1):
+        assert flanklen >= 1, f'"flanklen" argument must be at least 1.'
+
+        return range(self.pos0 + len(self.ref),
+                     self.pos0 + len(self.ref) + flanklen)
 
 
 def check_vcfspec_monoallele(vcfspec):
@@ -570,6 +573,14 @@ def coord_sortkey(chrom, pos, chromdict):
     """
 
     return (chromdict.contigs.index(chrom), pos)
+
+
+def get_read_sortkey(chromdict):
+    def sortkey(read):
+        return coord_sortkey(read.reference_name, read.reference_start, 
+                             chromdict)
+
+    return sortkey
 
 
 def get_vr_sortkey(chromdict):
