@@ -110,6 +110,9 @@ CONSEQUENCE_TRANSCRIPT_CLASSES = {
     'is_frameshift': (
         'frameshift_variant',
         ),
+    'is_inframe': (
+        'inframe_deletion',
+        ),
     'is_stopgain': (
         'stop_gained',
         ),
@@ -654,7 +657,7 @@ def parse_cmdline_vep(vr):
             if (raw_result_item['Codons'] is None) else 
             raw_result_item['Codons'].split('/'))
 
-        set_codon_frame0(annotitem)
+        #set_codon_frame0(annotitem)
 
         annotitem['variant_pos_transcript'] = raw_result_item['cDNA_position']
         annotitem['variant_pos_cds'] = raw_result_item['CDS_position']
@@ -732,11 +735,8 @@ def parse_cmdline_vep(vr):
                     subfun_motif(annotitem, raw_result_item)
                     motif[annotitem['id']] = annotitem
 
-        parsed = {
-            'transcript': transcript,
-            'regulatory': regulatory,
-            'motif': motif,
-        }
+        parsed = {'transcript': transcript, 'regulatory': regulatory,
+                  'motif': motif}
 
         return parsed
 
@@ -1073,7 +1073,7 @@ def parse_rest_vep(raw_result):
         annotitem['codon_change'] = (dic['codons'].split('/') 
                                      if ('codons' in dic) else 
                                      None)
-        set_codon_frame0(annotitem)
+        #set_codon_frame0(annotitem)
 
         annotitem['variant_start0_transcript'] = (dic['cdna_start'] - 1 
                                                   if ('cdna_start' in dic) 

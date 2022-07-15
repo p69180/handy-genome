@@ -36,11 +36,13 @@ def get_info_end(vr):
 def get_bnds_from_caller_vr(vr, fasta, chromdict):
     """
     Raises:
-        All raises are from get_vr_svinfo_caller_vr function.
+        All exceptions are from get_vr_svinfo_caller_vr function.
     """
 
-    assert len(vr.alts) == 1, (
-        f'Multiallelic variant record is not allowed:\n{vr}')
+    if len(vr.alts) != 1:
+        raise Exception(
+            f'Unexpected caller output vcf pattern: '
+            f'Multialleleic SV variant record:\n{vr}')
 
     vr_svinfo = get_vr_svinfo_caller_vr(vr, fasta, chromdict) 
         # this function does not return None ; it rather raises an Exception
@@ -147,12 +149,10 @@ def get_vr_svinfo_delly(vr, fasta, chromdict):
 
 
 def check_vr_format_delly(vr):
-    return (
-            ('CHR2' in vr.info) and 
+    return (('CHR2' in vr.info) and 
             ('CHR1' not in vr.info) and 
             ('CT' in vr.info) and 
-            (vr.ref == 'N')
-           )
+            (vr.ref == 'N'))
 
 
 def check_vr_format_manta(vr):

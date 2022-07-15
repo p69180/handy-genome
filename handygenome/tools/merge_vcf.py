@@ -9,6 +9,7 @@ import importlib
 top_package_name = __name__.split('.')[0]
 common = importlib.import_module('.'.join([top_package_name, 'common']))
 workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
+toolsetup = importlib.import_module('.'.join([top_package_name, 'workflow', 'toolsetup']))
 merge_module = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'merge']))
 indexing = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'indexing']))
 
@@ -29,6 +30,7 @@ def argument_parser(cmdargs):
 
     parser_dict = workflow.init_parser()
 
+    # required
     workflow.add_infilelist_arg(parser_dict['required'], required=True)
     workflow.add_outfile_arg(parser_dict['required'], required=True, 
                              must_not_exist='ask')
@@ -37,12 +39,21 @@ def argument_parser(cmdargs):
         '--mode', required=True, choices=('isec', 'union'),
         help=f'Must be "isec" (which means intersection) or "union".')
 
+    # optional
     parser_dict['optional'].add_argument(
         '--isec-indices', dest='isec_indices', required=False,
         help=textwrap.dedent(f"""\
             (Only applied for intersection) A string composed of 0 or 1,
             with the same length as the number of input files. Files 
-            marked with 0 are excluded and those with 1 are included."""))
+            marked with 0 are excluded and those with 1 are included. 
+            If not set, all samples are included in intersection."""))
+
+    # flag
+    parser_dict['flag'].add_argument(
+        '--remove-infoformat', dest='remove_infoformat', action='store_true',
+        help=f'If set, all INFO and FORMAT data are removed from the output.')
+
+    # others
     workflow.add_logging_args(parser_dict)
     workflow.add_index_arg(parser_dict)
     workflow.add_outfmt_arg(parser_dict['optional'], required=False)
@@ -56,15 +67,15 @@ def argument_parser(cmdargs):
 
 def main(cmdargs):
     args = argument_parser(cmdargs)
-    logger = workflow.get_logger(name='merge_vcf', 
-                                 stderr=(not args.silent),
-                                 filename=args.log, append=False)
+    logger = toolsetup.setup_logger(args)
 
     merge_module.main_file(
         infile_path_list=args.infile_path_list,
         outfile_path=args.outfile_path, fasta_path=args.fasta_path,
-        isec=(args.mode == 'isec'), isec_indices=args.isec_indices, 
-        mode_pysam=args.mode_pysam, outfile_must_not_exist='no', logger=logger)
+        remove_infoformat=args.remove_infoformat,
+        isec=(args.mode == 'isec'), isec_indices=args.isec_indices,
+        mode_pysam=args.mode_pysam, outfile_must_not_exist='no',
+        logger=logger)
 
     if not args.donot_index:
         indexing.index_vcf(args.outfile_path)

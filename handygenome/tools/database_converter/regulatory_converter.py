@@ -11,8 +11,9 @@ import importlib
 top_package_name = __name__.split('.')[0]
 common = importlib.import_module('.'.join([top_package_name, 'common']))
 workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
+toolsetup = importlib.import_module('.'.join([top_package_name, 'workflow', 'toolsetup']))
 customfile = importlib.import_module('.'.join([top_package_name, 'annotation', 'customfile']))
-chrnames = importlib.import_module('.'.join([top_package_name, 'chrnames']))
+assemblyspec = importlib.import_module('.'.join([top_package_name, 'assemblyspec']))
 
 
 DEFAULT_OUTFILE_BASENAME = 'ensembl_regulatory_sorted.gff.gz'
@@ -32,35 +33,34 @@ DEFAULT_OUTFILE_PATH_GRCH38 = os.path.join(
 
 def argument_parser(cmdargs):
     def sanity_check(args):
-        if args.outfile_path_grch37 is not None:
-            if os.path.exists(args.outfile_path_grch37):
-                raise Exception(f'Specified output file path already exists: {args.outfile_path_grch37}')
-
-        if args.outfile_path_grch38 is not None:
-            if os.path.exists(args.outfile_path_grch38):
-                raise Exception(f'Specified output file path already exists: {args.outfile_path_grch38}')
-
+        pass
 
     parser_dict = workflow.init_parser(
-        description = f'Ensembl gff files for regulatory elements and activity are downloaded and merged into a single gff file.')
+        description=(f'Ensembl gff files for regulatory elements and '
+                     f'activity are downloaded and merged into a single '
+                     f'gff file.'))
 
     parser_dict['optional'].add_argument(
-        '--outfile-grch37', dest = 'outfile_path_grch37', 
-        default = DEFAULT_OUTFILE_PATH_GRCH37,
-        required = False, help = f'Output gff file path for grch37')
+        '--outfile-grch37', dest='outfile_path_grch37', 
+        default=DEFAULT_OUTFILE_PATH_GRCH37,
+        type=workflow.arghandler_outfile_ask,
+        required=False, help=f'Output gff file path for grch37')
 
     parser_dict['optional'].add_argument(
-        '--outfile-grch38', dest = 'outfile_path_grch38', 
-        default = DEFAULT_OUTFILE_PATH_GRCH38,
-        required = False, help = f'Output gff file path for grch38')
+        '--outfile-grch38', dest='outfile_path_grch38', 
+        default=DEFAULT_OUTFILE_PATH_GRCH38,
+        type=workflow.arghandler_outfile_ask,
+        required=False, help=f'Output gff file path for grch38')
 
     parser_dict['optional'].add_argument(
-        '--download-dir-grch37', dest = 'download_dir_grch37', 
-        required = False, help = f'Directory of downloaded files for grch37. Not removed.')
+        '--download-dir-grch37', dest='download_dir_grch37', required=False, 
+        help=f'Directory of downloaded files for grch37. Not removed.')
 
     parser_dict['optional'].add_argument(
-        '--download-dir-grch38', dest = 'download_dir_grch38', 
-        required = False, help = f'Directory of downloaded files for grch38. Not removed.')
+        '--download-dir-grch38', dest='download_dir_grch38', required=False, 
+        help=f'Directory of downloaded files for grch38. Not removed.')
+
+    workflow.add_logging_args(parser_dict)
 
     args = parser_dict['main'].parse_args(cmdargs)
     sanity_check(args)
@@ -68,7 +68,8 @@ def argument_parser(cmdargs):
     return args
 
 
-def download(logger, mainfile_url, ftp_activity_directory, download_dir, mainfile_path, activity_dir):
+def download(logger, mainfile_url, ftp_activity_directory, download_dir, 
+             mainfile_path, activity_dir):
     # main file
     logger.info(f'Beginning download of main gff to "{mainfile_path}"')
     common.download(mainfile_url, mainfile_path)
@@ -114,7 +115,8 @@ def load_activity_data(activity_dir, logger):
     return activity_data, tissue_list
 
 
-def load_mainfile(mainfile_path, chromdict, assembly_spec, output_chrname_version):
+def load_mainfile(mainfile_path, chromdict, asmblspec, 
+                  output_chrname_version):
     mainfile_data = list()
     with gzip.open(mainfile_path, 'rt') as infile:
         for line in infile:
@@ -122,7 +124,7 @@ def load_mainfile(mainfile_path, chromdict, assembly_spec, output_chrname_versio
 
             # edit chrom
             if linesp[0] not in chromdict:
-                linesp[0] = assembly_spec.convert(linesp[0], output_chrname_version)
+                linesp[0] = asmblspec.convert(linesp[0], output_chrname_version)
 
             # get attributes dictionary
             raw_attrs = customfile.parse_gff3_attrs(linesp[8])
@@ -180,9 +182,9 @@ def convert_common(logger, mainfile_url, ftp_activity_directory, refver,
 
         rm_downloaded = False
 
-    # set chrnames dbs
-    assembly_spec = chrnames.SPECS[refver]
-    chromdict = assembly_spec.chromdicts[output_chrname_version]
+    # set assemblyspec dbs
+    asmblspec = assemblyspec.SPECS[refver]
+    chromdict = asmblspec.chromdicts[output_chrname_version]
 
     # load activity data
     logger.info(f'Loading activity files')
@@ -190,7 +192,8 @@ def convert_common(logger, mainfile_url, ftp_activity_directory, refver,
 
     # load main file
     logger.info(f'Loading the main file')
-    mainfile_data = load_mainfile(mainfile_path, chromdict, assembly_spec, output_chrname_version)
+    mainfile_data = load_mainfile(mainfile_path, chromdict, asmblspec, 
+                                  output_chrname_version)
 
     # sort
     logger.info(f'Sorting loaded main file data')
@@ -199,7 +202,8 @@ def convert_common(logger, mainfile_url, ftp_activity_directory, refver,
     # write uncompressed outfile
     logger.info(f'Writing the sorted lines')
     outfile_path_uncomp = outfile_path + '.uncompressed'
-    write_uncompressed_file(outfile_path_uncomp, mainfile_data_sorted, activity_data, tissue_list)
+    write_uncompressed_file(outfile_path_uncomp, mainfile_data_sorted, 
+                            activity_data, tissue_list)
 
     # compress and index
     logger.info(f'Compressing with bgzip and indexing with tabix')
@@ -222,7 +226,7 @@ def convert_grch38(logger, outfile_path, download_dir):
 
 def main(cmdargs):
     args = argument_parser(cmdargs)
-    logger = workflow.get_logger(name = 'regulatory_converter')
+    logger = toolsetup.setup_logger(args)
 
     #convert_grch37(logger, args.outfile_path_grch37, args.download_dir_grch37)
     convert_grch38(logger, args.outfile_path_grch38, args.download_dir_grch38)

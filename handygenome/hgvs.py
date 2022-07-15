@@ -189,8 +189,8 @@ def hgvsg_to_vcfspec(hgvsg, fasta, leftmost=True):
 def hgvsg_to_vcfspec_refver(hgvsg, refver):
     assert refver in ('hg19', 'hg38')
 
-    return hgvsg_to_vcfspec_fastapath(
-        hgvsg, common.DEFAULT_FASTA_PATH_DICT[refver])
+    return hgvsg_to_vcfspec_fastapath(hgvsg, 
+                                      common.DEFAULT_FASTA_PATHS[refver])
 
 
 def hgvsg_to_vcfspec_fastapath(hgvsg, fasta_path):
@@ -205,8 +205,8 @@ def hgvsc_to_hgvsg(hgvsc, hg19):
     Runs ensembl rest variantrecoder
     """
 
-    chrnames = importlib.import_module(
-        '.'.join([top_package_name, 'chrnames']))
+    assemblyspec = importlib.import_module(
+        '.'.join([top_package_name, 'assemblyspec']))
 
     if hg19:
         raw_result = ensembl_rest.get_url_contents(
@@ -237,8 +237,8 @@ def hgvsc_to_hgvsg(hgvsc, hg19):
     assert len(raw_hgvsg_split) == 2
     raw_contig = raw_hgvsg_split[0]
 
-    namemap = (chrnames.SPECS['grch37'] if hg19 else 
-               chrnames.SPECS['grch38'])
+    namemap = (assemblyspec.SPECS['grch37'] if hg19 else 
+               assemblyspec.SPECS['grch38'])
     if raw_contig not in namemap.data['refseq']:
         raise Exception(f'contig name of variantrecoder result is not '
                         f'refseq: {raw_hgvsg}')

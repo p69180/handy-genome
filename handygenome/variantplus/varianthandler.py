@@ -83,9 +83,9 @@ def reheader(vr, vcfheader):
 
     new_vr = vcfheader.new_record()
     _copy_basic_attrs(vr, new_vr)
-    _copy_filter(old_vr, new_vr, skip_pass=False)
-    _copy_info(old_vr, new_vr, dont_copy_if_exist=False)
-    _copy_format(old_vr, new_vr, dont_copy_if_exist=False)
+    _copy_filter(vr, new_vr, skip_pass=False)
+    _copy_info(vr, new_vr, dont_copy_if_exist=False)
+    _copy_format(vr, new_vr, dont_copy_if_exist=False)
 
     return new_vr
 
@@ -100,16 +100,16 @@ def rename(vr, samples):
                                        vcfheader=vr.header)
     new_vr = new_header.new_record()
     _copy_basic_attrs(vr, new_vr)
-    _copy_filter(old_vr, new_vr, skip_pass=False)
-    _copy_info(old_vr, new_vr, dont_copy_if_exist=False)
+    _copy_filter(vr, new_vr, skip_pass=False)
+    _copy_info(vr, new_vr, dont_copy_if_exist=False)
 
     for old_sampleid, new_sampleid in zip(vr.header.samples, samples):
         for key in vr.samples[old_sampleid]:
             if key == 'GT':
-                new_vr.samples[new_sampleid].allele_indices = \
-                    vr.samples[old_sampleid].allele_indices
-                new_vr.samples[new_sampleid].phased = \
-                    vr.samples[old_sampleid].phased
+                new_vr.samples[new_sampleid].allele_indices = (
+                    vr.samples[old_sampleid].allele_indices)
+                new_vr.samples[new_sampleid].phased = (
+                    vr.samples[old_sampleid].phased)
             else:
                 infoformat.set_format(
                     new_vr, key, new_sampleid,
@@ -178,153 +178,6 @@ def _copy_format(old_vr, new_vr, dont_copy_if_exist=True):
                             assign_val(old_vr, new_vr, key, sampleid)
                     else:
                         assign_val(old_vr, new_vr, key, sampleid)
-
-#def translate(vr, samples = None, pysamhdr = None, rename = False):
-#    return reform_samples(vr, samples = None, pysamhdr = None, rename = False)
-#
-#
-#def reform_samples(vr, samples = None, pysamhdr = None, rename = False):
-#    """
-#    Args:
-#        vr: pysam.VariantRecord object
-#        samples: An iterable containing new sample names
-#        pysamhdr: pysam.VariantHeader object
-#        rename: If True, only sample names are changed without editing format entries
-#
-#    Returns:
-#        A new pysam.VariantRecord object with format columns in the order represented by input argument 'samples' or 'pysamhdr'.
-#        
-#        The output is created with 'new_record' method of pysam.VariantHeader object.
-#        The pysam.VariantHeader object is 'pysamhdr' argument if it is given, otherwise created using 'header' attribute of 'vr' argument and 'samples' argument.
-#    """
-#
-#    def sanity_check(vr, samples, pysamhdr, rename):
-#        common.check_num_notNone(1, (samples, pysamhdr), ('samples', 'pysamhdr'))
-#        if rename:
-#            e_msg = f'Numbers of samples are different between original pysam.VariantRecord object and new sample list.'
-#            if samples is not None:
-#                if len(samples) != len(vr.samples.keys()):
-#                    raise ValueError(e_msg)
-#            elif pysamhdr is not None:
-#                if len(pysamhdr.samples) != len(vr.samples.keys()):
-#                    raise ValueError(e_msg)
-#
-#    def check_identical_samples(vr, samples, pysamhdr):
-#        if samples is not None:
-#            return tuple(vr.samples.keys()) == tuple(samples)
-#        elif pysamhdr is not None:
-#            return tuple(vr.samples.keys()) == tuple(pysamhdr.samples)
-#
-#    def get_params(vr, samples, pysamhdr):
-#        vr_copy = vr.copy()
-#        infoformat.refine_vr_InfoFormatValue(vr_copy)
-#        if pysamhdr is not None:
-#            new_pysamhdr = pysamhdr
-#            new_samples = tuple(pysamhdr.samples)
-#        elif samples is not None:
-#            new_pysamhdr = initvcf.create_header(samples = samples, header = vr.header)
-#            new_samples = tuple(samples)
-#
-#        return vr_copy, new_pysamhdr, new_samples
-#
-#    def get_format_items(vr_copy, new_samples):
-#        format_items = list()
-#        for sampleid in new_samples:
-#            if sampleid in vr_copy.samples.keys():
-#                items = dict( vr_copy.samples[sampleid] )
-#                if 'GT' in items:
-#                    del items['GT']
-#            else:
-#                items = make_empty_format(vr_copy)
-#    
-#            format_items.append(items)
-#
-#        return format_items
-#
-#    def get_format_items_rename(vr_copy):
-#        format_items = list()
-#        for val in vr_copy.samples.values():
-#            items = dict( val )
-#            if 'GT' in items:
-#                del items['GT']
-#            format_items.append(items)
-#
-#        return format_items
-#
-#    def init_new_vr(vr_copy, new_pysamhdr, format_items):
-#        new_vr = new_pysamhdr.new_record(filter = vr_copy.filter, info = dict(vr_copy.info), samples = format_items)
-#
-#        return new_vr
-#
-#    def add_genotype(new_vr, vr_copy, new_samples):
-#        # genotype information
-#        new_vr.alleles = vr_copy.alleles
-#        for sampleid in new_samples:
-#            if sampleid in vr_copy.samples.keys():
-#                new_vr.samples[sampleid].allele_indices = vr_copy.samples[sampleid].allele_indices
-#                new_vr.samples[sampleid].phased = vr_copy.samples[sampleid].phased
-#            else:
-#                new_vr.samples[sampleid].allele_indices = None
-#                new_vr.samples[sampleid].phased = False
-#
-#    def add_genotype_rename(new_vr, vr_copy):
-#        # genotype information
-#        new_vr.alleles = vr_copy.alleles
-#        for val1, val2 in zip(new_vr.samples.values(), vr_copy.samples.values()):
-#            val1.allele_indices = val2.allele_indices
-#            val1.phased = val2.phased
-#    
-#    def add_other_attrs(new_vr, vr_copy):
-#        new_vr.contig = vr_copy.contig
-#        new_vr.pos = vr_copy.pos
-#        new_vr.id = vr_copy.id
-#        new_vr.qual = vr_copy.qual
-#
-#    def main(vr, samples, pysamhdr, rename):
-#        sanity_check(vr, samples, pysamhdr, rename)
-#
-#        if check_identical_samples(vr, samples, pysamhdr):
-#            return vr
-#
-#        else:
-#            vr_copy, new_pysamhdr, new_samples = get_params(vr, samples, pysamhdr)
-#            format_items = ( 
-#                    get_format_items_rename(vr_copy)
-#                    if rename else
-#                    get_format_items(vr_copy, new_samples)
-#                    )
-#            new_vr = init_new_vr(vr_copy, new_pysamhdr, format_items)
-#            if rename:
-#                add_genotype_rename(new_vr, vr_copy)
-#            else:
-#                add_genotype(new_vr, vr_copy, new_samples)
-#            add_other_attrs(new_vr, vr_copy)
-#    
-#            return new_vr
-#
-#    return main(vr, samples, pysamhdr, rename)
-#
-#
-#def make_empty_format(vr):
-#    # Attempting to create a FORMAT field with Type=Flag results in this message:
-#        # [E::vcf_parse_format] The format type 0 is currently not supported
-#    result = dict()
-#    for key, val in vr.format.items():
-#        if val.type == 'Flag':
-#            raise Exception(f"FORMAT field '{key}' has 'Flag' type.")
-#        if key == 'GT':
-#            continue # GT value is assigned in a separate way
-#        result[key] = infoformat.modify_InfoFormatValue(
-#                key = key,
-#                val = None,
-#                transl_number = infoformat.translate_metadata_number(vr, val.number),
-#                keytype = val.type,
-#                for_write = True,
-#                typeconv = False,
-#                sanitycheck = False,
-#                )
-#
-#    return result
 
 
 # functions dealing with list of vr

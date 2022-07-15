@@ -8,6 +8,7 @@ import importlib
 top_package_name = __name__.split('.')[0]
 common = importlib.import_module('.'.join([top_package_name, 'common']))
 workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
+toolsetup = importlib.import_module('.'.join([top_package_name, 'workflow', 'toolsetup']))
 concat_module = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'concat']))
 indexing = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'indexing']))
 
@@ -33,9 +34,7 @@ def argument_parser(cmdargs):
 
 def main(cmdargs):
     args = argument_parser(cmdargs)
-    logger = workflow.get_logger(name='concat_vcf',
-                                 stderr=(not args.silent),
-                                 filename=args.log, append=False)
+    logger = toolsetup.setup_logger(args)
 
     logger.info('BEGINNING')
 

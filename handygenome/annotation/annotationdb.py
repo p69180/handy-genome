@@ -3,6 +3,7 @@ import pprint
 import sys
 import collections
 from operator import attrgetter
+import copy
 
 
 import pysam
@@ -25,11 +26,39 @@ structvars = importlib.import_module('.'.join([top_package_name, 'svlib', 'struc
 
 
 # CONSTANTS
+SEPS = {
+    'nonprint': {
+        'top': '\x1c',
+        'keyval': '\x1d',
+        'seq': '\x1e',
+        'subkeyval': '\x1f'},
+    'initial': {
+        'top': '$$$',
+        'keyval': ':::',
+        'seq': '&&&',
+        'subkeyval': '@@@'},
+    'percent': {
+        'top': '%3A',
+        'keyval': '%3B',
+        'seq': '%3D',
+        'subkeyval': '%25'},
+    }
+DEFAULT_SEPTYPE = 'nonprint'
 
-SEP_TOP = '$$$'
-SEP_KEYVAL = ':::'
-SEP_SEQ = '&&&'
-SEP_SUBKEYVAL = '@@@'
+#SEP_TOP = '$$$'
+#SEP_KEYVAL = ':::'
+#SEP_SEQ = '&&&'
+#SEP_SUBKEYVAL = '@@@'
+
+#SEP_TOP = '%3A'
+#SEP_KEYVAL = '%3B'
+#SEP_SEQ = '%3D'
+#SEP_SUBKEYVAL = '%25'
+
+#SEP_TOP = '\x1c'
+#SEP_KEYVAL = '\x1d'
+#SEP_SEQ = '\x1e'
+#SEP_SUBKEYVAL = '\x1f'
 
 ATOMIC_TYPES = (type(None), str, int, float, bool)
 
@@ -133,7 +162,7 @@ def add_infometas(pysamhdr):
     for annotdb_type in ANNOTDB_TYPES:
         for annotdb_attrname in ANNOTDB_ATTRNAMES:
             infometa = INFOMETAS[annotdb_type][annotdb_attrname]
-            pysamhdr.add_meta(key = 'INFO', items = infometa.items())
+            pysamhdr.add_meta(key='INFO', items=infometa.items())
 
 
 class AnnotDB:
@@ -149,7 +178,8 @@ class AnnotDB:
         cosmic
     """
 
-    def __init__(self, annotdb_type, refver, fasta, chromdict, vr=None):
+    def __init__(self, annotdb_type, refver, fasta, chromdict, 
+                 vr=None, septype=DEFAULT_SEPTYPE):
         assert annotdb_type in ANNOTDB_TYPES, (
             f'annotdb_type must be one of: {ANNOTDB_TYPES}')
 
@@ -158,6 +188,7 @@ class AnnotDB:
         #assert self.refver in ensembl_rest.REFVERS_ALLOWED
         self.fasta = fasta
         self.chromdict = chromdict
+        self.septype = septype
 
         if vr is None:
             self.init_empty()
@@ -180,56 +211,62 @@ class AnnotDB:
         return showdict
 
     def init_empty(self):
-        self.transcript = AnnotItemDict()
-        self.regulatory = AnnotItemDict()
-        self.motif = AnnotItemDict()
-        self.repeat = AnnotItemDict()
+        self.transcript = AnnotItemDict(septype=self.septype)
+        self.regulatory = AnnotItemDict(septype=self.septype)
+        self.motif = AnnotItemDict(septype=self.septype)
+        self.repeat = AnnotItemDict(septype=self.septype)
 
         self.set_transcript_subsets()
 
-        self.popfreq = Popfreq()
-        self.cosmic = Cosmic()
+        self.popfreq = Popfreq(septype=self.septype)
+        self.cosmic = Cosmic(septype=self.septype)
 
     def load_vr(self, vr):
         self.transcript = AnnotItemDict(
-            vr, infokey=INFOMETAS[self.annotdb_type]['transcript']['ID'])
+            vr, infokey=INFOMETAS[self.annotdb_type]['transcript']['ID'],
+            septype=self.septype)
         self.regulatory = AnnotItemDict(
-            vr, infokey=INFOMETAS[self.annotdb_type]['regulatory']['ID'])
+            vr, infokey=INFOMETAS[self.annotdb_type]['regulatory']['ID'],
+            septype=self.septype)
         self.motif = AnnotItemDict(
-            vr, infokey=INFOMETAS[self.annotdb_type]['motif']['ID'])
+            vr, infokey=INFOMETAS[self.annotdb_type]['motif']['ID'],
+            septype=self.septype)
         self.repeat = AnnotItemDict(
-            vr, infokey=INFOMETAS[self.annotdb_type]['repeat']['ID'])
+            vr, infokey=INFOMETAS[self.annotdb_type]['repeat']['ID'],
+            septype=self.septype)
 
         self.set_transcript_subsets()
 
         self.popfreq = Popfreq(
-            vr, infokey=INFOMETAS[self.annotdb_type]['popfreq']['ID'])
+            vr, infokey=INFOMETAS[self.annotdb_type]['popfreq']['ID'],
+            septype=self.septype)
         self.cosmic = Cosmic(
-            vr, infokey=INFOMETAS[self.annotdb_type]['cosmic']['ID'])
+            vr, infokey=INFOMETAS[self.annotdb_type]['cosmic']['ID'],
+            septype=self.septype)
 
-    def write(self, vr, addkey=False):
-        if addkey:
+    def write(self, vr, add_meta=False):
+        if add_meta:
             add_infometas(vr.header)
 
-        self.transcript.write(
-            vr, infokey=INFOMETAS[self.annotdb_type]['transcript']['ID'], 
-            addkey=False)
-        self.regulatory.write(
-            vr, infokey=INFOMETAS[self.annotdb_type]['regulatory']['ID'], 
-            addkey=False)
-        self.motif.write(
-            vr, infokey=INFOMETAS[self.annotdb_type]['motif']['ID'], 
-            addkey=False)
-        self.repeat.write(
-            vr, infokey=INFOMETAS[self.annotdb_type]['repeat']['ID'], 
-            addkey=False)
+        self.transcript.write_info(
+            vr, key=INFOMETAS[self.annotdb_type]['transcript']['ID'], 
+            add_meta=False)
+        self.regulatory.write_info(
+            vr, key=INFOMETAS[self.annotdb_type]['regulatory']['ID'], 
+            add_meta=False)
+        self.motif.write_info(
+            vr, key=INFOMETAS[self.annotdb_type]['motif']['ID'], 
+            add_meta=False)
+        self.repeat.write_info(
+            vr, key=INFOMETAS[self.annotdb_type]['repeat']['ID'], 
+            add_meta=False)
 
-        self.popfreq.write(
-            vr, infokey=INFOMETAS[self.annotdb_type]['popfreq']['ID'], 
-            addkey=False)
-        self.cosmic.write(
-            vr, infokey=INFOMETAS[self.annotdb_type]['cosmic']['ID'], 
-            addkey=False)
+        self.popfreq.write_info(
+            vr, key=INFOMETAS[self.annotdb_type]['popfreq']['ID'], 
+            add_meta=False)
+        self.cosmic.write_info(
+            vr, key=INFOMETAS[self.annotdb_type]['cosmic']['ID'], 
+            add_meta=False)
 
     # POPFREQ ###################################################
 
@@ -257,7 +294,8 @@ class AnnotDB:
         cosmic_vr, cosmic_vr_noncoding = fetch_cosmic_vr(
             vcfspec, cosmic_coding_vcf, cosmic_noncoding_vcf, self.fasta, 
             search_equivs=search_equivs)
-        self.cosmic.load_other(parse_cosmic_vr(cosmic_vr, cosmic_vr_noncoding), 
+        self.cosmic.load_other(
+            parse_cosmic_vr(cosmic_vr, cosmic_vr_noncoding), 
             overwrite = overwrite)
 
     # FEATURES ###################################################
@@ -268,7 +306,6 @@ class AnnotDB:
             self, vcfspec, tabixfile_geneset, tabixfile_regulatory, 
             tabixfile_repeats, distance=veplib.DEFAULT_DISTANCE):
         """To be run with non-SV variants"""
-
         assert self.annotdb_type == 'plain'
 
         mttype = vcfspec.get_mttype_firstalt()
@@ -278,8 +315,10 @@ class AnnotDB:
         fetch_interval = common.Interval(
             chrom=vcfspec.chrom, start1=max(1, vcfspec.pos - distance),
             end1=min(self.chromdict[vcfspec.chrom], vcfspec.pos + distance))
-        self.update_customfile_transcript(fetch_interval, tabixfile_geneset)
-        self.update_customfile_regulatory(fetch_interval, tabixfile_regulatory)
+        self.update_customfile_transcript(fetch_interval, tabixfile_geneset,
+                                          fill_missing_is_canonical=True)
+        self.update_customfile_regulatory(fetch_interval,
+                                          tabixfile_regulatory)
         self.update_customfile_repeat(fetch_interval, tabixfile_repeats)
 
         # modifier
@@ -294,9 +333,12 @@ class AnnotDB:
         # update using customfiles
         fetch_interval = common.Interval(
             chrom=interval.chrom, start1=max(1, interval.start1 - distance),
-            end1=min(self.chromdict[interval.chrom], interval.end1 + distance))
-        self.update_customfile_transcript(fetch_interval, tabixfile_geneset)
-        self.update_customfile_regulatory(fetch_interval, tabixfile_regulatory)
+            end1=min(self.chromdict[interval.chrom], 
+                     interval.end1 + distance))
+        self.update_customfile_transcript(fetch_interval, tabixfile_geneset,
+                                          fill_missing_is_canonical=True)
+        self.update_customfile_regulatory(fetch_interval, 
+                                          tabixfile_regulatory)
         self.update_customfile_repeat(fetch_interval, tabixfile_repeats)
 
         # modifier
@@ -317,8 +359,10 @@ class AnnotDB:
             fetch_interval = common.Interval(
                 chrom=chrom, start1=max(1, pos - distance), end1=pos)
 
-        self.update_customfile_transcript(fetch_interval, tabixfile_geneset)
-        self.update_customfile_regulatory(fetch_interval, tabixfile_regulatory)
+        self.update_customfile_transcript(fetch_interval, tabixfile_geneset,
+                                          fill_missing_is_canonical=True)
+        self.update_customfile_regulatory(fetch_interval, 
+                                          tabixfile_regulatory)
         self.update_customfile_repeat(fetch_interval, tabixfile_repeats)
 
         # modifier
@@ -485,8 +529,7 @@ class AnnotDB:
                 feature_range0 = range(annotitem['start0'], annotitem['end0'])
                 annotitem['is_enclosed'] = (
                     feature_range0.start >= var_range0.start and
-                    feature_range0.stop <= var_range0.stop
-                )
+                    feature_range0.stop <= var_range0.stop)
 
     # modifier for breakend
     def modifier_for_bnd(self, pos, endis5):
@@ -506,7 +549,8 @@ class AnnotDB:
         3) Sets "is_broken" attribute
         """
 
-        on_the_other_side, on_the_border = self.get_feature_classifiers(endis5)
+        (on_the_other_side, 
+         on_the_border) = self.get_feature_classifiers(endis5)
 
         for attrname in ANNOTDB_ATTRNAMES_FEATURES:
             annotitemdict = getattr(self, attrname)
@@ -564,12 +608,23 @@ FEATURE ON THE OTHER SIDE  = = = = = =     | = = = = = = = =  : FEATURE ON THE B
             tabixfile_repeats)
         self.repeat.load_other(repeat_dict, overwrite=False, create_new=True)
 
-    def update_customfile_transcript(self, fetch_interval, tabixfile_geneset):
+    def update_customfile_transcript(self, fetch_interval, tabixfile_geneset,
+                                     fill_missing_is_canonical=True):
         transcript_dict = customfile.fetch_transcript(
             fetch_interval.chrom, fetch_interval.start0, fetch_interval.end0, 
             tabixfile_geneset)
         self.transcript.load_other(transcript_dict, overwrite=False, 
                                    create_new=True)
+        if fill_missing_is_canonical:
+            for annotitem_id, annotitem in self.transcript.items():
+                if 'is_canonical' not in annotitem:
+                    raw_result = ensembl_rest.lookup_id(ID=annotitem['id'],
+                                                        refver=self.refver,
+                                                        expand=False)
+                    if raw_result['is_canonical'] == 1:
+                        annotitem['is_canonical'] = True
+                    else:
+                        annotitem['is_canonical'] = False
 
     def update_customfile_regulatory(self, fetch_interval, 
                                      tabixfile_regulatory):
@@ -647,8 +702,8 @@ FEATURE ON THE OTHER SIDE  = = = = = =     | = = = = = = = =  : FEATURE ON THE B
         try:
             parsed = ensembl_parser.parse_cmdline_vep(vr)
         except Exception as e:
-            raise Exception(f'VEP output variant record parsing '
-                            f'failed:\n{vr}') from e
+            raise Exception(f'Failure of VEP output variant record parsing:'
+                            f'\n{vr}') from e
             
         self._load_ensembl_parsed(parsed, overwrite=overwrite, 
                                   create_new=create_new)
@@ -742,35 +797,53 @@ FEATURE ON THE OTHER SIDE  = = = = = =     | = = = = = = = =  : FEATURE ON THE B
 
 
 class AnnotItem(dict):
-    infokey = None
+    meta = None
+        # to be used as "items" argument for pysam.VariantHeader.add_meta
 
-    @staticmethod
-    def decode(infostring, dic):
+    @property
+    def annotkey(self):
+        return self.__class__.meta['ID']
+
+    infokey = annotkey  # alias
+
+    def decode(self, infostring):
         """dic is updated with contents of infostring"""
+        sep_top = SEPS[self.septype]['top']
+        sep_keyval = SEPS[self.septype]['keyval']
+        sep_seq = SEPS[self.septype]['seq']
+        sep_subkeyval = SEPS[self.septype]['subkeyval']
 
-        parsed = dict()
-        for x in infostring.split(SEP_TOP):
-            x_sp = x.split(SEP_KEYVAL)
-            parsed[x_sp[0]] = x_sp[1]
-        for key, val in parsed.items():
-            if len(val.split(SEP_SUBKEYVAL)) == 1: # not a dict
-                new_val = [common.str_to_nonstr(x) for x in val.split(SEP_SEQ)]
+        annotitem = dict()
+        for x in infostring.split(sep_top):
+            x_sp = x.split(sep_keyval)
+            annotitem[x_sp[0]] = x_sp[1]
+        for key, val in annotitem.items():
+            if len(val.split(sep_subkeyval)) == 1: # not a dict
+                new_val = [common.str_to_nonstr(x) 
+                           for x in val.split(sep_seq)]
                 if len(new_val) == 1:
                     new_val = new_val[0]
                 else:
                     new_val = new_val[1:-1]
             else:
                 tmp = list()
-                for x in val.split(SEP_SEQ):
-                    x_split = x.split(SEP_SUBKEYVAL)
-                    tmp.append((x_split[0], common.str_to_nonstr(x_split[1])))
+                for x in val.split(sep_seq):
+                    x_split = x.split(sep_subkeyval)
+#                    tmp_item = (common.str_to_nonstr(x_split[0]), 
+#                                common.str_to_nonstr(x_split[1]))
+                    tmp_item = map(common.str_to_nonstr, x_split)
+                    tmp.append(tmp_item)
                 new_val = dict(tmp)
 
-            parsed[key] = new_val
-        dic.update(parsed)
+            key = common.str_to_nonstr(key)
 
-    def __init__(self, vr = None, infokey = None):
+            annotitem[key] = new_val
+
+        return annotitem
+
+    def __init__(self, vr=None, infokey=None, septype=DEFAULT_SEPTYPE):
         super().__init__()
+        self.septype = septype
         if (vr is not None):
             self.load_vr(vr, infokey)
 
@@ -798,9 +871,9 @@ class AnnotItem(dict):
             assert isinstance(key, str), f'The key must be a str object.'
             if isinstance(val, dict):
                 for subkey, subval in val.items():
-                    assert isinstance(subkey, str), (
-                        f'When the value is a dict, each subkey must be a '
-                        f'str object.')
+#                    assert isinstance(subkey, str), (
+#                        f'When the value is a dict, each subkey must be a '
+#                        f'str object.')
                     assert isinstance(subval, ATOMIC_TYPES), (
                         f'When the value is a dict, the type of each '
                         f'subvalue must be one of {str(ATOMIC_TYPES)}.')
@@ -815,15 +888,16 @@ class AnnotItem(dict):
                     f'must be one of {str(ATOMIC_TYPES)}.')
         except AssertionError as e:
             new_e = Exception(f'Invalid key/value for assignment to '
-                               f'AnnotItem: key - {key} ; value - {value}')
+                               f'AnnotItem: key - {key} ; value - {val}')
             raise new_e from e
 
     def load_infostring(self, infostring):
-        self.decode(infostring, self)
+        other_annotitem = self.decode(infostring)
+        self.load_other(other_annotitem, overwrite=True)
 
-    def load_vr(self, vr, infokey = None):
+    def load_vr_info(self, vr, infokey=None):
         if infokey is None:
-            infokey = self.__class__.infokey
+            infokey = self.annotkey
 
         assert vr.header.info[infokey].number == 1
         assert vr.header.info[infokey].type == 'String'
@@ -832,9 +906,22 @@ class AnnotItem(dict):
             infostring = infoformat.get_info(vr, infokey)
             self.load_infostring(infostring)
 
-    def load_other(self, other, overwrite = False):
-        """
-        other: an AnnotItem object
+    load_vr = load_vr_info  # alias
+
+    def load_vr_format(self, vr, sampleid, key=None):
+        if key is None:
+            key = self.annotkey
+
+        assert vr.header.formats[key].number == 1
+        assert vr.header.formats[key].type == 'String'
+
+        if not infoformat.check_NA_format(vr, sampleid, key):
+            infostring = infoformat.get_format(vr, sampleid, key)
+            self.load_infostring(infostring)
+
+    def load_other(self, other, overwrite=False):
+        """Args:
+            other: an AnnotItem object
         """
 
         if overwrite:
@@ -851,48 +938,64 @@ class AnnotItem(dict):
                         self[key] = val
                     else:
                         if val != old_val:
-                            e_msg = (
+                            raise Exception(
                                 f'Old value and new value are different; '
                                 f'key: {key} ; old_val: {old_val} ; '
                                 f'new_val: {val}')
-                            raise Exception(e_msg)
 
     def encode(self):
+        sep_top = SEPS[self.septype]['top']
+        sep_keyval = SEPS[self.septype]['keyval']
+        sep_seq = SEPS[self.septype]['seq']
+        sep_subkeyval = SEPS[self.septype]['subkeyval']
+
         if len(self) == 0:
             infostring = None
         else:
             result = list()
             for key, val in self.items():
                 if isinstance(val, (tuple, list)):
-                    modified_val = (SEP_SEQ 
-                                    + SEP_SEQ.join(map(str, val)) 
-                                    + SEP_SEQ)
+                    modified_val = (sep_seq 
+                                    + sep_seq.join(map(str, val)) 
+                                    + sep_seq)
                 elif isinstance(val, dict):
-                    modified_val = SEP_SEQ.join(
-                        SEP_SUBKEYVAL.join(map(str, x)) 
+                    modified_val = sep_seq.join(
+                        sep_subkeyval.join(map(str, x)) 
                         for x in val.items())
                 else:
                     modified_val = val
 
-                result.append(f'{key}{SEP_KEYVAL}{modified_val}')
+                result.append(f'{key}{sep_keyval}{modified_val}')
 
-            infostring = SEP_TOP.join(result)
+            infostring = sep_top.join(result)
 
         return infostring
 
-    def write(self, vr, infokey=None, addkey=False):
-        if infokey is None:
-            infokey = self.__class__.infokey
+    def write_info(self, vr, key=None, add_meta=False):
+        if key is None:
+            key = self.__class__.meta['ID']
+        if add_meta:
+            vr.header.add_meta(key='INFO', 
+                               items=self.__class__.meta.items())
 
-        if addkey:
-            add_infometas(vr.header)
+        infoformat.set_info(vr, key, self.encode())
 
-        infoformat.set_info(vr, infokey, self.encode())
+    #write = write_info  # alias
+
+    def write_format(self, vr, sampleid, key=None, add_meta=False):
+        if key is None:
+            key = self.__class__.meta['ID']
+        if add_meta:
+            vr.header.add_meta(key='FORMAT', 
+                               items=self.__class__.meta.items())
+
+        infoformat.set_format(vr, sampleid, key, self.encode())
 
 
 class AnnotItemDict(dict):
-    def __init__(self, vr = None, infokey = None):
+    def __init__(self, vr=None, infokey=None, septype=DEFAULT_SEPTYPE):
         super().__init__()
+        self.septype = septype
         if (vr is not None) and (infokey is not None):
             self.load_vr(vr, infokey)
 
@@ -904,9 +1007,13 @@ class AnnotItemDict(dict):
         return common.cpformat(self.get_showdict())
 
     def get_showdict(self):
-        showdict = dict()
-        for key, val in sorted(self.items(), key = lambda x: x[1]['start0']):
-            showdict[key] = dict(val)
+        if all('start0' in x for x in self.values()):
+            showdict = dict()
+            for key, val in sorted(self.items(), 
+                                   key=(lambda x: x[1]['start0'])):
+                showdict[key] = dict(val)
+        else:
+            return dict(self)
 
         return showdict
 
@@ -918,29 +1025,29 @@ class AnnotItemDict(dict):
         assert vr.header.info[infokey].type == 'String'
 
         if not infoformat.check_NA_info(vr, infokey):
-            infoval = infoformat.get_info(vr, infokey, collapse_tuple = False)
+            infoval = infoformat.get_info(vr, infokey, collapse_tuple=False)
             for infostring in infoval:
-                annotitem = AnnotItem()
+                annotitem = AnnotItem(septype=self.septype)
                 annotitem.load_infostring(infostring)
                 self[annotitem['id']] = annotitem
 
-    def load_other(self, other, overwrite = True, create_new = False):
+    def load_other(self, other, overwrite=True, create_new=False):
         for ID, annotitem in other.items():
             if ID in self.keys():
-                self[ID].load_other(annotitem, overwrite = overwrite)
+                self[ID].load_other(annotitem, overwrite=overwrite)
             else:
                 if create_new:
                     self[ID] = annotitem
 
-    def write(self, vr, infokey, addkey = False):
-        if addkey:
+    def write_info(self, vr, key, add_meta=False):
+        if add_meta:
             add_infometas(vr.header)
 
         infoval = list()
         for annotitem in self.values():
             infoval.append(annotitem.encode())
 
-        vr.info[infokey] = infoval
+        vr.info[key] = infoval
 
 
 ######################################
@@ -953,7 +1060,15 @@ class Popfreq(AnnotItem):
 
 class Cosmic(AnnotItem):
     #infokey = INFOMETAS['nonSV']['cosmic']['ID']
-    pass
+    def __repr__(self):
+        self_for_show = copy.deepcopy(self)
+        for key in ('occurrence', 'occurrence_somatic',
+                    'portion', 'portion_somatic'):
+            if self_for_show[key] is not None:
+                self_for_show[key] = dict(sorted(self_for_show[key].items(),
+                                                 key=(lambda x: x[1]),
+                                                 reverse=True))
+        return common.cpformat(dict(self_for_show), sort_dicts=False)
 
 
 ######################################
@@ -966,7 +1081,7 @@ def fetch_dbsnp_vr(vcfspec, dbsnp_vcf, fasta, search_equivs=True):
 
     dbsnp_vr = customfile.fetch_relevant_vr(vcfspec, dbsnp_vcf, fasta=fasta,
                                             search_equivs=search_equivs,
-                                            allow_multiple=True)
+                                            allow_multiple=False)
     
     return dbsnp_vr
 
@@ -997,7 +1112,7 @@ def parse_dbsnp_vr(dbsnp_vr):
         popfreq[pop] = None
 
     if dbsnp_vr is not None:
-        popfreq['id'] = dbsnp_vr.info['dbSNP_ID']
+        popfreq['id'] = 'rs' + str(dbsnp_vr.info['rs'])
 
         for key, val in dbsnp_vr.info.items():
             if key.startswith('AF_'):
@@ -1008,33 +1123,34 @@ def parse_dbsnp_vr(dbsnp_vr):
 
 
 def parse_cosmic_vr(cosmic_vr, cosmic_vr_noncoding):
-    def handler(val):
-        if val is None:
-            result = None
+    def handler(vr, infokey):
+        if infoformat.check_NA_info(vr, infokey):
+            return None
         else:
+            raw_val = infoformat.get_info(vr, infokey, collapse_tuple=False)
             result = dict()
-            #if not isinstance(val, (tuple, list)):
-            #    val = [ val ]
-            for x in val:
-                sp = x.split(':::')
+            for x in raw_val:
+                try:
+                    sp = x.split(':::')
+                except:
+                    print(f'vr: {vr}')
+                    print(f'value from raw lookup: {vr.info["cosmic_occurrence_somatic"]}')
+                    print(f'value from get_info: {raw_val}')
+                    raise
                 result[sp[0]] = common.str_to_nonstr(sp[1])
 
-        return result
+            return result
 
     def set_vals_common(cosmic, vr):
         cosmic['id'] = vr.info['cosmic_ID']
-        cosmic['occurrence'] = handler(vr.info['cosmic_occurrence'])
-        cosmic['portion'] = handler(vr.info['cosmic_portion'])
+        cosmic['occurrence'] = handler(vr, 'cosmic_occurrence')
+        cosmic['portion'] = handler(vr, 'cosmic_portion')
         cosmic['total_occurrence'] = vr.info['cosmic_total_occurrence']
         cosmic['total_portion'] = vr.info['cosmic_total_portion']
 
         # below lines use 'infoformat.get_info' because each value may be missing
-        cosmic['occurrence_somatic'] = handler(
-            infoformat.get_info(vr, 'cosmic_occurrence_somatic', 
-                                collapse_tuple=False))
-        cosmic['portion_somatic'] = handler(
-            infoformat.get_info(vr, 'cosmic_portion_somatic', 
-                                collapse_tuple=False))
+        cosmic['occurrence_somatic'] = handler(vr, 'cosmic_occurrence_somatic')
+        cosmic['portion_somatic'] = handler(vr, 'cosmic_portion_somatic')
         cosmic['total_occurrence_somatic'] = infoformat.get_info(
             vr, 'cosmic_total_occurrence_somatic')
         cosmic['total_portion_somatic'] = infoformat.get_info(
@@ -1061,9 +1177,10 @@ def parse_cosmic_vr(cosmic_vr, cosmic_vr_noncoding):
             cosmic['max_occur_count_somatic'] = None
             cosmic['max_occur_portion_somatic'] = None
         else:
-            cosmic['max_occur_site_somatic'], \
-            cosmic['max_occur_count_somatic'] = max(
-                cosmic['occurrence_somatic'].items(), key=(lambda x: x[1]))
+            (cosmic['max_occur_site_somatic'],
+             cosmic['max_occur_count_somatic']) = max(
+                cosmic['occurrence_somatic'].items(), 
+                key=(lambda x: x[1]))
             cosmic['max_occur_portion_somatic'] = (
                 cosmic['portion_somatic'][cosmic['max_occur_site_somatic']])
 

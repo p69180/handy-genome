@@ -9,7 +9,8 @@ import importlib
 top_package_name = __name__.split('.')[0]
 common = importlib.import_module('.'.join([top_package_name, 'common']))
 workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
-chrnames = importlib.import_module('.'.join([top_package_name, 'chrnames']))
+toolsetup = importlib.import_module('.'.join([top_package_name, 'workflow', 'toolsetup']))
+assemblyspec = importlib.import_module('.'.join([top_package_name, 'assemblyspec']))
 
 
 DEFAULT_OUTFILE_BASENAME = 'ucsc_repeatmasker_out_sorted.bed.gz'
@@ -44,6 +45,8 @@ def argument_parser(cmdargs):
         help=(f'(Optional) previously downloaded original ucsc file path '
               f'for grch38'))
 
+    workflow.add_logging_args(parser_dict)
+
     args = parser_dict['main'].parse_args(cmdargs)
 
     return args
@@ -55,7 +58,7 @@ def download(logger, url, download_path):
     logger.info(f'Download finished')
 
 
-def parse(download_path, assembly_spec, output_chrname_version):
+def parse(download_path, asmblspec, output_chrname_version):
     parse_result = list()
     with gzip.open(download_path, 'rt') as infile:
         for _ in range(3):
@@ -65,7 +68,7 @@ def parse(download_path, assembly_spec, output_chrname_version):
             linestrip = common.rm_newline(line)
             linesp = linestrip.split()
 
-            chrom = assembly_spec.convert(linesp[4], output_chrname_version)
+            chrom = asmblspec.convert(linesp[4], output_chrname_version)
             start = int(linesp[5]) - 1
             end = int(linesp[6])
             name = linesp[10] + ':' + linesp[9]
@@ -111,13 +114,13 @@ def convert_common(original_url, output_chrname_version, refver, logger,
     else:
         rm_downloaded = False
 
-    # set chrnames dbs
-    assembly_spec = chrnames.SPECS[refver]
-    chromdict = assembly_spec.chromdicts[output_chrname_version]
+    # set assemblyspec dbs
+    asmblspec = assemblyspec.SPECS[refver]
+    chromdict = asmblspec.chromdicts[output_chrname_version]
 
     # load
     logger.info(f'Loading the original file')
-    parse_result = parse(download_path, assembly_spec, output_chrname_version)
+    parse_result = parse(download_path, asmblspec, output_chrname_version)
 
     # sort
     logger.info(f'Sorting the original file lines')
@@ -151,7 +154,7 @@ def convert_grch38(logger, outfile_path, download_path=None):
 
 def main(cmdargs):
     args = argument_parser(cmdargs)
-    logger = workflow.get_logger(name ='repeat_converter')
+    logger = toolsetup.setup_logger(args)
 
     convert_grch37(logger, args.outfile_path_grch37, args.download_path_grch37)
     convert_grch38(logger, args.outfile_path_grch38, args.download_path_grch38)

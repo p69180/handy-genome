@@ -14,9 +14,11 @@ initvcf = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'init
 breakends = importlib.import_module('.'.join([top_package_name, 'variantplus', 'breakends']))
 annotationdb = importlib.import_module('.'.join([top_package_name, 'annotation', 'annotationdb']))
 indexing = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'indexing']))
-vpfilters_module = importlib.import_module('.'.join([top_package_name, 'variantplus', 'vpfilters']))
 headerhandler = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'headerhandler']))
 
+
+LOGGER = workflow.get_logger(name=__name__)
+DEFAULT_LOGGING_LINENO = 10000
 
 GREMLIN_HEADER = [
     'CHR1',
@@ -67,27 +69,56 @@ class VcfPlus:
     """
 
     def __init__(self, vcf_path, fasta=None, chromdict=None, init_vp=True,
-                 logger=None, set_annotdb=True):
+                 logger=None, set_annotdb=True, set_readstats=True,
+                 logging_lineno=DEFAULT_LOGGING_LINENO,
+                 annotitem_septype=annotationdb.DEFAULT_SEPTYPE):
         """
         Args:
             fasta : pysam.FastaFile object
             vcf_path : Path to a vcf file
         """
 
+        def init_vcf(vcf_path):
+            self.vcf = pysam.VariantFile(self.vcf_path, 'r')
+            annotationdb.add_infometas(self.vcf.header)
+
+        def set_fasta_chromdict(fasta, chromdict):
+            if fasta is None:
+                self.fasta = pysam.FastaFile(
+                    common.DEFAULT_FASTA_PATHS[self.refver])
+            else:
+                self.fasta = fasta
+
+            if chromdict is None:
+                self.chromdict = common.ChromDict(fasta=self.fasta)
+            else:
+                self.chromdict = chromdict
+
+        def init_vp_containers(vplist, set_annotdb, set_readstats, 
+                               logging_lineno):
+            self.set_vplist(vplist, set_annotdb=set_annotdb, 
+                            set_readstats=set_readstats, 
+                            logging_lineno=logging_lineno)
+            self.vplist_filtered = self.vplist
+            #if set_details:
+                #self.set_ID_attributes()
+                #self.set_more_vp_containers()
+
         self._vplist_show_len = 30
 
-        self.vcf_path = vcf_path
-        self.logger = (
-            workflow.get_logger(name=os.path.basename(self.vcf_path))
-            if logger is None else
-            logger)
+        self.annotitem_septype = annotitem_septype
 
-        self.init_vcf(vcf_path)
+        self.vcf_path = vcf_path
+        self.logger = LOGGER if (logger is None) else logger
+
+        init_vcf(vcf_path)
         self.refver = common.infer_refver_vcfheader(self.vcf.header)
-        self.set_fasta_chromdict(fasta, chromdict)
+        set_fasta_chromdict(fasta, chromdict)
 
         if init_vp:
-            self.init_vp_containers(vplist=None, set_annotdb=set_annotdb)
+            init_vp_containers(vplist=None, set_annotdb=set_annotdb,
+                               set_readstats=set_readstats,
+                               logging_lineno=logging_lineno)
             self.length = len(self.vplist)
 
     def __repr__(self):
@@ -115,29 +146,6 @@ class VcfPlus:
 
         return '\n'.join(result)
 
-    def set_fasta_chromdict(self, fasta, chromdict):
-        if fasta is None:
-            self.fasta = pysam.FastaFile(
-                common.DEFAULT_FASTA_PATH_DICT[self.refver])
-        else:
-            self.fasta = fasta
-
-        if chromdict is None:
-            self.chromdict = common.ChromDict(fasta=self.fasta)
-        else:
-            self.chromdict = chromdict
-
-    def init_vcf(self, vcf_path):
-        self.vcf = pysam.VariantFile(self.vcf_path, 'r')
-        annotationdb.add_infometas(self.vcf.header)
-
-    def init_vp_containers(self, vplist=None, set_annotdb=True):
-        self.set_vplist(vplist, set_annotdb)
-        self.vplist_filtered = None
-        #if set_details:
-            #self.set_ID_attributes()
-            #self.set_more_vp_containers()
-
     ###########################################################
 
     def set_header(self, header = None):
@@ -151,42 +159,49 @@ class VcfPlus:
 
     def _update_contig(self):
         if not check_having_good_contigs(self.vcf):
-            self.vcf = get_updated_pysamvcf(self.vcf, chromdict = self.chromdict)
+            self.vcf = get_updated_pysamvcf(self.vcf, chromdict=self.chromdict)
 
     def _set_has_good_contigs(self):
         self.has_good_contigs = check_having_good_contigs(self.vcf)
 
     ###########################################################
 
-    def set_vplist(self, vplist=None, set_annotdb=True):
+    def set_vplist(self, vplist=None, set_annotdb=True, set_readstats=True,
+                   logging_lineno=DEFAULT_LOGGING_LINENO):
         """SV variant records for bnd2 are not loaded"""
 
+        # construct vplist
         if vplist is None:
-            self.vplist = list()
+            self.vplist = variantplus.VariantPlusList()
 
             NR = 0
             for vr in self.vcf.fetch():
                 NR += 1
-                if NR % 10000 == 0:
+                if NR % logging_lineno == 0:
                     self.logger.info(f'{NR} variant records processed')
 
                 if varianthandler.check_SV(vr):
                     vr_svinfo = breakends.get_vr_svinfo_standard_vr(
                         vr, self.fasta, self.chromdict)
                     if vr_svinfo['is_bnd1']:
-                        vp = variantplus.VariantPlus(vr, fasta=self.fasta, 
-                                                     chromdict=self.chromdict,
-                                                     refver=self.refver,
-                                                     set_annotdb=set_annotdb)
+                        vp = variantplus.VariantPlus(
+                            vr, fasta=self.fasta, chromdict=self.chromdict,
+                            refver=self.refver, set_annotdb=set_annotdb,
+                            set_readstats=set_readstats,
+                            annotitem_septype=self.annotitem_septype)
                         self.vplist.append(vp)
                 else:
-                    vp = variantplus.VariantPlus(vr, fasta=self.fasta,
-                                                 chromdict=self.chromdict,
-                                                 refver=self.refver,
-                                                 set_annotdb=set_annotdb)
+                    vp = variantplus.VariantPlus(
+                        vr, fasta=self.fasta, chromdict=self.chromdict,
+                        refver=self.refver, set_annotdb=set_annotdb,
+                        set_readstats=set_readstats,
+                        annotitem_septype=self.annotitem_septype)
                     self.vplist.append(vp)
         else:
             self.vplist = vplist
+
+        # set gr
+        self.vplist.set_gr()
 
     def sort_vplist(self):
         self.logger.info('Sorting self.vplist')
@@ -214,8 +229,13 @@ class VcfPlus:
 
     ###########################################################
 
+    def filter_isec(self, gr):
+        self.vplist_filtered = self.vplist_filtered.get_isec(gr)
+
     def filter_vplist(self, vpfilter):
-        self.vplist_filtered = list(filter(vpfilter, self.vplist))
+        new_vplist_filtered = variantplus.VariantPlusList()
+        new_vplist_filtered.extend(filter(vpfilter, self.vplist))
+        self.vplist_filtered = new_vplist_filtered
         
 
     ###########################################################

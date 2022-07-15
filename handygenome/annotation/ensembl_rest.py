@@ -12,7 +12,7 @@ SPECIES = {
     'hg19': 'homo_sapiens',
     'hg38': 'homo_sapiens',
     'mm39': 'mus_musculus',
-}
+    }
 
 
 def into_37(s):
@@ -43,12 +43,9 @@ HTTP_HEADERS_GET = {'Content-Type': 'application/json',
                     'Accept': 'application/json'}
 
 
+@common.get_deco_arg_choices({'refver': REFVERS_ALLOWED})
 def lookup_id(ID, refver, expand=True):
-    """
-    start, end are 1-based inclusive coordinates
-    """
-
-    common.check_arg_choices(refver, 'refver', REFVERS_ALLOWED)
+    """start, end are 1-based inclusive coordinates"""
 
     if refver == 'hg19':
         prefix = PREFIX_ID_37
@@ -56,17 +53,16 @@ def lookup_id(ID, refver, expand=True):
         prefix = PREFIX_ID
 
     url = '/'.join([prefix, ID])
-    params = { 'expand' : int(expand) }
+    params = {'expand': int(expand)}
 
     return common.http_get(url, params, HTTP_HEADERS_GET)
 
 
-def lookup_id_post(IDs, refver, expand = True):
+@common.get_deco_arg_choices({'refver': REFVERS_ALLOWED})
+def lookup_id_post(IDs, refver, expand=True):
     """
     start, end are 1-based inclusive coordinates
     """
-
-    common.check_arg_choices(refver, 'refver', REFVERS_ALLOWED)
 
     if refver == 'hg19':
         url = PREFIX_ID_37
@@ -79,9 +75,8 @@ def lookup_id_post(IDs, refver, expand = True):
     return common.http_post(url, data, params, HTTP_HEADERS_POST)
 
 
-def lookup_symbol(symbol, refver, expand = False):
-    common.check_arg_choices(refver, 'refver', REFVERS_ALLOWED)
-
+@common.get_deco_arg_choices({'refver': REFVERS_ALLOWED})
+def lookup_symbol(symbol, refver, expand=False):
     prefix = PREFIX_SYMBOL_37 if (refver == 'hg19') else PREFIX_SYMBOL
     species = SPECIES[refver]
     url = '/'.join( [ prefix, species, symbol ] )
@@ -90,9 +85,8 @@ def lookup_symbol(symbol, refver, expand = False):
     return common.http_get(url, params, HTTP_HEADERS_GET)
 
 
-def lookup_symbol_post(symbols, refver, expand = False):
-    common.check_arg_choices(refver, 'refver', REFVERS_ALLOWED)
-
+@common.get_deco_arg_choices({'refver': REFVERS_ALLOWED})
+def lookup_symbol_post(symbols, refver, expand=False):
     species = SPECIES[refver]
     if refver == 'hg19':
         url = '/'.join([PREFIX_SYMBOL_37, species])
@@ -105,10 +99,9 @@ def lookup_symbol_post(symbols, refver, expand = False):
     return common.http_post(url, data, params, HTTP_HEADERS_POST)
 
 
+# unavailable for mouse
+@common.get_deco_arg_choices({'refver': ('hg19', 'hg38')})
 def regulatory(ID, refver):
-    # unavailable for mouse
-    common.check_arg_choices(refver, 'refver', ('hg19', 'hg38'))
-
     prefix = PREFIX_REGULATORY_37 if (refver == 'hg19') else PREFIX_REGULATORY
     url = '/'.join([prefix, ID])
     params = { 'activity' : 1 }
@@ -122,7 +115,7 @@ def regulatory(ID, refver):
     return result
 
 @common.get_deco_arg_choices({'refver': REFVERS_ALLOWED})
-@common.get_deco_num_set_differently(('vcfspec', 'hgvsg'), 1)
+#@common.get_deco_num_set_differently(('vcfspec', 'hgvsg'), 1)
 def vep(refver, hgvsg=None, vcfspec=None, distance=5000, 
         with_CADD=True, with_Phenotypes=False, with_canonical=True, 
         with_mane=True, with_miRNA=False, with_numbers=True, 

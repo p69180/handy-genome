@@ -17,7 +17,7 @@ REGULATORY_PATH = {
     }
 
 DBSNP_PATHS = {
-    'hg19': '/home/users/pjh/References/dbSNP37/modified_files_220218/dbSNP_b155_GRCh37.p13.vcf.gz',
+    'hg19': '/home/users/pjh/References/dbSNP37/modified_files_220602/dbSNP_b155_GRCh37.p13.vcf.gz',
     'hg38': '/home/users/pjh/References/dbSNP38/modified_files/dbSNP_b155_GRCh38.p13.vcf.gz',
     }
 
@@ -32,20 +32,21 @@ COSMIC_PATHS = {
         },
     }
 
+###
 
 TABIXFILES_REPEATS = {
-    'hg19': pysam.TabixFile(REPEATS_PATH['hg19'], parser = pysam.asBed()),
-    'hg38': pysam.TabixFile(REPEATS_PATH['hg38'], parser = pysam.asBed()),
+    'hg19': pysam.TabixFile(REPEATS_PATH['hg19'], parser=pysam.asBed()),
+    'hg38': pysam.TabixFile(REPEATS_PATH['hg38'], parser=pysam.asBed()),
     }
 
 TABIXFILES_GENESET = {
-    'hg19': pysam.TabixFile(GENESET_PATH['hg19'], parser = pysam.asGTF()),
-    'hg38': pysam.TabixFile(GENESET_PATH['hg38'], parser = pysam.asGTF()),
+    'hg19': pysam.TabixFile(GENESET_PATH['hg19'], parser=pysam.asGTF()),
+    'hg38': pysam.TabixFile(GENESET_PATH['hg38'], parser=pysam.asGTF()),
     }
 
 TABIXFILES_REGULATORY = {
-    'hg19': pysam.TabixFile(REGULATORY_PATH['hg19'], parser = pysam.asGTF()),
-    'hg38': pysam.TabixFile(REGULATORY_PATH['hg38'], parser = pysam.asGTF()),
+    'hg19': pysam.TabixFile(REGULATORY_PATH['hg19'], parser=pysam.asGTF()),
+    'hg38': pysam.TabixFile(REGULATORY_PATH['hg38'], parser=pysam.asGTF()),
     }
 
 VCFS_DBSNP = {

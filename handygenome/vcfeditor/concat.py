@@ -46,7 +46,7 @@ def sanity_check_headers(infile_path_list):
 
 def write_outfile(infile_path_list, outfile_path, mode_pysam):
     with pysam.VariantFile(infile_path_list[0]) as in_vcf:
-        outfile_header = in_vcf.header
+        outfile_header = in_vcf.header.copy()
 
     with pysam.VariantFile(outfile_path, mode=mode_pysam, 
                            header=outfile_header) as out_vcf:
@@ -59,9 +59,9 @@ def write_outfile(infile_path_list, outfile_path, mode_pysam):
 def main(
         infile_path_list,
         outfile_path,
-        mode_bcftools = 'z', 
-        mode_pysam = None, 
-        outfile_must_not_exist = 'ask',
+        mode_bcftools='z', 
+        mode_pysam=None, 
+        outfile_must_not_exist='ask',
         ):
     infile_path_list, outfile_path = sanity_check_args(
         infile_path_list, outfile_path, outfile_must_not_exist)

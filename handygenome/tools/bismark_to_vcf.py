@@ -7,6 +7,7 @@ import importlib
 top_package_name = __name__.split('.')[0]
 common = importlib.import_module('.'.join([top_package_name, 'common']))
 workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
+toolsetup = importlib.import_module('.'.join([top_package_name, 'workflow', 'toolsetup']))
 indexing = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'indexing']))
 initvcf = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'initvcf']))
 headerhandler = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'headerhandler']))
@@ -324,9 +325,7 @@ def write_oufile(infile_path, outfile_path, mode_pysam, vcfheader, fasta,
 
 def main(cmdargs):
     args = argument_parser(cmdargs)
-    logger = workflow.get_logger(
-        name='bismark_to_vcf', stderr=(not args.silent),
-        filename=args.log, append=args.append_log)
+    logger = toolsetup.setup_logger(args)
 
     logger.info('BEGINNING')
 

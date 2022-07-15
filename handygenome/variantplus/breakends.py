@@ -16,7 +16,7 @@ LOGGER = workflow.get_logger(
     formatter=logging.Formatter(
         fmt='[%(asctime)s  %(levelname)s] %(name)s - %(message)s',
         datefmt=workflow.DEFAULT_DATEFMT),
-    level='info', stderr=True, filename=None, append=False)
+    level='info', stderr=True, filenames=None, append=False)
 
 
 class Breakends:
@@ -683,10 +683,12 @@ class Breakends:
             return self.pos_bnd2 - 1
 
     def _convert_seq_between_bnds(self, seq):
-        if self.endis5_bnd1 == self.endis5_bnd2:
-            return Bio.Seq.reverse_complement(seq)
-        else:
-            return seq
+        return convert_seq_between_bnds(seq, 
+                                        self.endis5_bnd1, 
+                                        self.endis5_bnd2)
+
+
+#######################################################
 
 
 class NonStandardSVAlt(Exception):
@@ -695,6 +697,13 @@ class NonStandardSVAlt(Exception):
 
 class NonStandardSVRecord(Exception):
     pass
+
+
+def convert_seq_between_bnds(seq, endis5_bnd1, endis5_bnd2):
+    if endis5_bnd1 == endis5_bnd2:
+        return Bio.Seq.reverse_complement(seq)
+    else:
+        return seq
 
 
 #######################################################
@@ -856,22 +865,26 @@ def get_bnds_from_vr_svinfo(vr, vr_svinfo, fasta, chromdict):
             if vr_svinfo['t'][-1] == vr_svinfo['ref']:
                 pos_bnd2 = vr.pos
                 inserted_seq = list(
-                    self._convert_seq_between_bnds(vr_svinfo['t'][:-1]))
+                    convert_seq_between_bnds(vr_svinfo['t'][:-1], 
+                                             endis5_bnd1, endis5_bnd2))
             else:
                 warn()
                 pos_bnd2 = vr.pos + 1
                 inserted_seq = list(
-                    self._convert_seq_between_bnds(vr_svinfo['t']))
+                    convert_seq_between_bnds(vr_svinfo['t'], 
+                                             endis5_bnd1, endis5_bnd2))
         else:
             if vr_svinfo['t'][0] == vr_svinfo['ref']:
                 pos_bnd2 = vr.pos
                 inserted_seq = list(
-                    self._convert_seq_between_bnds(vr_svinfo['t'][1:]))
+                    convert_seq_between_bnds(vr_svinfo['t'][1:], 
+                                             endis5_bnd1, endis5_bnd2))
             else:
                 warn()
                 pos_bnd2 = vr.pos - 1
                 inserted_seq = list(
-                    self._convert_seq_between_bnds(vr_svinfo['t'])) 
+                    convert_seq_between_bnds(vr_svinfo['t'], 
+                                             endis5_bnd1, endis5_bnd2))
 
     bnds = Breakends(chrom_bnd1=chrom_bnd1, pos_bnd1=pos_bnd1,
                      endis5_bnd1=endis5_bnd1,
@@ -946,8 +959,10 @@ def get_is_bnd1(vr, vr_svinfo, chromdict):
     elif order > 0:
         is_bnd1 = False
     elif order == 0:
-        raise Exception(f'Current chrom/pos and mate chrom/pos are identical '
-                        f'for vcf record :\n{vr}')
+        is_bnd1 = True
+#        raise Exception(
+#            f'Current chrom/pos and mate chrom/pos are identical '
+#            f'for vcf record :\n{vr}')
 
     return is_bnd1
 

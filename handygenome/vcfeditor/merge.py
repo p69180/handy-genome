@@ -11,6 +11,10 @@ common = importlib.import_module('.'.join([top_package_name, 'common']))
 workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
 varianthandler = importlib.import_module('.'.join([top_package_name, 'variantplus', 'varianthandler']))
 headerhandler = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'headerhandler']))
+initvcf = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'initvcf']))
+
+
+LOGGER = workflow.get_logger()
 
 
 def sanity_check_args(infile_path_list, outfile_path, isec, isec_indices,
@@ -120,26 +124,36 @@ def get_output_vcfspecs_union(raw_vcfspecs, chromdict):
     return output_vcfspecs
 
 
-def reform_vr_dict(vr_dict, merged_header, output_vcfspecs, logger):
-    merged_vr_dict = dict()
+def merge_vr_dict(vr_dict, output_header, output_vcfspecs, logger):
+    output_vr_list = list()
     NR = 0
     for vcfspec in output_vcfspecs:
         NR += 1
-        merged_vr_dict[vcfspec] = varianthandler.merge(
-            vr_dict[vcfspec], merged_header)
+        merged_vr = varianthandler.merge(vr_dict[vcfspec], output_header)
+        output_vr_list.append(merged_vr)
         del vr_dict[vcfspec]
         if NR % 50_000 == 0:
             logger.info(f'{NR:,} merged variant records created')
 
-    return merged_vr_dict
+    return output_vr_list
 
 
-def write(merged_vr_dict, output_vcfspecs, outfile_path, mode_pysam, 
-          merged_header):
+def get_output_vrs_wo_infoformat(output_vcfspecs, output_header):
+    output_vr_list = list()
+    for vcfspec in output_vcfspecs:
+        new_vr = output_header.new_record()
+        varianthandler.apply_vcfspec(new_vr, vcfspec)
+        output_vr_list.append(new_vr)
+
+    return output_vr_list
+
+
+def write(output_vr_list, output_vcfspecs, outfile_path, mode_pysam, 
+          output_header):
     with pysam.VariantFile(outfile_path, mode=mode_pysam, 
-                           header=merged_header) as out_vcf:
-        for vcfspec in output_vcfspecs:
-            out_vcf.write(merged_vr_dict[vcfspec])
+                           header=output_header) as out_vcf:
+        for vr in output_vr_list:
+            out_vcf.write(vr)
 
 
 #########################################
@@ -149,6 +163,7 @@ def main_file(
         infile_path_list, 
         outfile_path, 
         fasta_path, 
+        remove_infoformat=False,
         isec=False, 
         isec_indices=None, 
         mode_bcftools='z', 
@@ -157,24 +172,31 @@ def main_file(
         logger=None,
         ):
     if logger is None:
-        logger = workflow.get_logger(name='merge_vcf', stderr=True)
+        logger = LOGGER
 
     logger.info('Beginning')
+
+    # set basic parameters
     infile_path_list, outfile_path = sanity_check_args(
         infile_path_list, outfile_path, isec, isec_indices, 
         outfile_must_not_exist)
     isec_indices_bool = isec_indices_to_bool(isec_indices, 
                                              len(infile_path_list))
     mode_pysam = common.write_mode_arghandler(mode_bcftools, mode_pysam)
-    merged_header = get_merged_header(infile_path_list)
     chromdict = common.ChromDict(fasta_path=fasta_path)
+    if remove_infoformat:
+        output_header = initvcf.create_header(chromdict=chromdict)
+    else:
+        output_header = get_merged_header(infile_path_list)
 
     with pysam.FastaFile(fasta_path) as fasta:
+        # load input files data
         vcf_list = [pysam.VariantFile(x) for x in infile_path_list]
 
         logger.info('Loading input vcf data')
         raw_vcfspecs, vr_dict = load_vcf_data(vcf_list)
 
+        # create output_vcfspecs
         logger.info('Getting union/intersection of vcfspecs')
         if isec:
             output_vcfspecs = get_output_vcfspecs_isec(
@@ -185,14 +207,20 @@ def main_file(
         logger.info(f'{len(output_vcfspecs):,} variant records are to be '
                     f'written')
 
-        logger.info('Merging overlapping variant records. '
-                    'This step may take a while.')
-        merged_vr_dict = reform_vr_dict(vr_dict, merged_header, 
-                                        output_vcfspecs, logger)
+        # create output_vr_list
+        if remove_infoformat:
+            output_vr_list = get_output_vrs_wo_infoformat(output_vcfspecs, 
+                                                          output_header)
+        else:
+            logger.info('Merging overlapping variant records. '
+                        'This step may take a while.')
+            output_vr_list = merge_vr_dict(vr_dict, output_header, 
+                                            output_vcfspecs, logger)
 
+        # write final result
         logger.info('Writing final result')
-        write(merged_vr_dict, output_vcfspecs, outfile_path, mode_pysam, 
-              merged_header)
+        write(output_vr_list, output_vcfspecs, outfile_path, mode_pysam, 
+              output_header)
 
         for vcf in vcf_list:
             vcf.close()

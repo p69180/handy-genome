@@ -9,6 +9,9 @@ common = importlib.import_module('.'.join([top_package_name, 'common']))
 workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
 
 
+LOGGER = workflow.get_logger(name=__name__)
+
+
 def sanity_check(vcf_path, outdir):
     vcf_path = workflow.arghandler_infile(vcf_path)
     outdir = workflow.arghandler_outdir(outdir)
@@ -30,45 +33,47 @@ def get_lineno_vcf(vcf):
     return lineno
 
 
-def get_output_lineno_list(total_lineno, n_file = None, n_line = None):
+@common.get_deco_num_set_differently(('n_file', 'n_line'), 1)
+def get_output_lineno_list(total_lineno, n_file=None, n_line=None):
     """
     Args:
         total_lineno: Total number of variant records of input vcf.
-        n_file: Number of output files. \
-If greater than the total line number, reduced to the total line number.
-        n_line: Number of variant records per one output file. \
-If greater than the total line number, reduced to the total line number.
+        n_file: Number of output files. If greater than the total line number, 
+            reduced to the total line number.
+        n_line: Number of variant records per one output file. If greater 
+            than the total line number, reduced to the total line number.
         * One and only one of n_file or n_line argument must be set.
 
     Returns:
         A list composed of the number of variant records per output file.
     """
+
+    def warn():
+        LOGGER.warning(
+            f'"n_file" is greater than "total_lineno". It will be '
+            f'changed to be the same with "total_lineno".')
     
-    common.check_num_None(1, (n_file, n_line), ('n_file', 'n_line'))
     assert total_lineno > 0, f'"total_lineno" must be a positive integer.'
 
     if n_file is not None:
         if n_file > total_lineno:
-            warnings.warn(f'"n_file" is greater than "total_lineno". It will be changed to be the same with "total_lineno".')
-        n_file = min(n_file, total_lineno)
-        q, r = divmod(total_lineno, n_file)
-        result = list(itertools.repeat(q+1, r)) + list(itertools.repeat(q, n_file - r))
-
+            warn()
+        result = common.get_interval_lengths_num(total_lineno, n_file)
     elif n_line is not None:
         if n_line > total_lineno:
-            warnings.warn(f'"n_line" is greater than "total_lineno". It will be changed to be the same with "total_lineno".')
-        n_line = min(n_line, total_lineno)
-        q, r = divmod(total_lineno, n_line)
-        result = list(itertools.repeat(n_line, q)) + list(itertools.repeat(r, 1))
+            warn()
+        result = common.get_interval_lengths_width(total_lineno, n_line)
 
     return result
 
 
-def write_split_vcfs(vcf_path, output_lineno_list, split_filenames, mode_pysam):
+def write_split_vcfs(vcf_path, output_lineno_list, split_filenames, 
+                     mode_pysam):
     with pysam.VariantFile(vcf_path, 'r') as in_vcf:
         fetch = in_vcf.fetch()
         for lineno, outfile_path in zip(output_lineno_list, split_filenames):
-            with pysam.VariantFile(outfile_path, mode_pysam, header = in_vcf.header) as out_vcf:
+            with pysam.VariantFile(outfile_path, mode_pysam, 
+                                   header=in_vcf.header) as out_vcf:
                 for _ in range(lineno):
                     out_vcf.write(next(fetch))
 
@@ -77,13 +82,14 @@ def write_split_vcfs(vcf_path, output_lineno_list, split_filenames, mode_pysam):
 def main(vcf_path, outdir, n_file=None, n_line=None, mode_bcftools='z', 
          mode_pysam=None, prefix='', suffix='.vcf.gz'):
     """
-    Splits input vcf by either 'n_file' (number of output files) or 'n_line' (number of lines each split file contains).
+    Splits input vcf by either 'n_file' (number of output files) or 
+        'n_line' (number of lines each split file contains).
     Split file names looks like: <prefix>000<suffix>
 
     Args:
         vcf_path: Input vcf file path
-        outdir: Directory where split vcf files will be saved. May not be existing. Must not be an non-empty directory.
-
+        outdir: Directory where split vcf files will be saved. May not be 
+            existing. Must not be an non-empty directory.
         One of 'n_file' and 'n_line' must be set.
     """
 
@@ -94,11 +100,11 @@ def main(vcf_path, outdir, n_file=None, n_line=None, mode_bcftools='z',
             total_lineno, n_file = n_file, n_line = n_line,
             )
     mode_pysam = common.write_mode_arghandler(mode_bcftools, mode_pysam)
-    split_filenames = workflow.get_split_filenames( # begins with 0
-            len(output_lineno_list), outdir, prefix, suffix,
-            )
+    split_filenames = workflow.get_split_filenames( 
+        len(output_lineno_list), outdir, prefix, suffix)
+        # "split_filenames" begins with 0
 
-
-    write_split_vcfs(vcf_path, output_lineno_list, split_filenames, mode_pysam)
+    write_split_vcfs(vcf_path, output_lineno_list, split_filenames, 
+                     mode_pysam)
 
     return split_filenames

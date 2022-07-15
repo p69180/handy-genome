@@ -31,24 +31,16 @@ def make_alleleinfoitem_readplus(vcfspec, rp, flanklen=DEFAULT_FLANKLEN):
     assert flanklen >= 1, f'"flanklen" argument must be at least 1.'
 
     preflank_range0, postflank_range0 = get_flank_ranges(vcfspec, flanklen)
-    spans = check_read_spans_allele(rp.read, vcfspec, preflank_range0, 
-                                    postflank_range0)
-
+    spans = (rp.check_spans(preflank_range0) and 
+             rp.check_spans(postflank_range0))
     if spans:
-        pairs_indexes_pre = rp.get_pairs_indexes(preflank_range0)
-        pairs_indexes_post = rp.get_pairs_indexes(postflank_range0)
-        pairs_indexes_site = rp.get_pairs_indexes(vcfspec.get_REF_range0())
-
-        allele_seq = rp.get_seq_from_pairs_indexes(pairs_indexes_site)
-        alleleclass = get_alleleclass(vcfspec, rp, allele_seq, 
-                                      pairs_indexes_pre, pairs_indexes_post)
+        alleleclass = get_alleleclass(vcfspec, rp, preflank_range0, 
+                                      postflank_range0)
     else:
-        allele_seq = None
         alleleclass = None
 
     alleleinfoitem = dict()
     alleleinfoitem['spans'] = spans
-    alleleinfoitem['allele_seq'] = allele_seq
     alleleinfoitem['alleleclass'] = alleleclass
 
     return alleleinfoitem
@@ -72,30 +64,7 @@ def get_flank_ranges(vcfspec, flanklen):
     return preflank_range0, postflank_range0
 
 
-def check_matches(rp, pairs_indexes):
-    for pairs_idx in pairs_indexes:
-        querypos0 = rp.pairs_dict['querypos0'][pairs_idx]
-        refseq = rp.pairs_dict['refseq'][pairs_idx]
-        matches = ((querypos0 is not None) and 
-                   (refseq is not None) and
-                   refseq.isupper())
-        if not matches:
-            return False
-    return True
-
-
-def check_read_spans_allele(read, vcfspec, preflank_range0, postflank_range0):
-    """Returns:
-        True if the read spans the flanking bases around the variable region
-    """
-
-    return (read.reference_name == vcfspec.chrom and
-            read.reference_start <= preflank_range0.start and
-            read.reference_end >= postflank_range0.stop)
-
-
-def get_alleleclass(vcfspec, rp, allele_seq, pairs_indexes_pre, 
-                    pairs_indexes_post):
+def get_alleleclass(vcfspec, rp, preflank_range0, postflank_range0):
     """Returns:
         None: not informative
         -1: other than REF and ALTS
@@ -106,10 +75,10 @@ def get_alleleclass(vcfspec, rp, allele_seq, pairs_indexes_pre,
     """
 
     if (
-            rp.check_matches(pairs_indexes_pre) and
-            rp.check_matches(pairs_indexes_post)):
-        alleles = (vcfspec.ref,) + vcfspec.alts
-
+            rp.check_matches(preflank_range0) and
+            rp.check_matches(postflank_range0)):
+        allele_seq = rp.get_seq_from_range0(vcfspec.REF_range0)
+        alleles = vcfspec.alleles
         if allele_seq in alleles:
             alleleclass = alleles.index(allele_seq)
         else:

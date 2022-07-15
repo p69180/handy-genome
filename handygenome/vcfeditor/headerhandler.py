@@ -10,23 +10,23 @@ common = importlib.import_module('.'.join([top_package_name, 'common']))
 
 
 def add_INFOmeta(vcfheader, ID, Type, Number, Description):
-    vcfheader.add_meta(key = 'INFO',
-                       items = [('ID', ID), ('Type', Type), ('Number', Number), 
-                                ('Description', Description)])
+    vcfheader.add_meta(key='INFO',
+                       items=[('ID', ID), ('Type', Type), ('Number', Number), 
+                              ('Description', Description)])
 
 
 def add_FORMATmeta(vcfheader, ID, Type, Number, Description):
-    vcfheader.add_meta(key = 'FORMAT',
-                       items = [('ID', ID), ('Type', Type), ('Number', Number), 
-                                ('Description', Description)])
+    vcfheader.add_meta(key='FORMAT',
+                       items=[('ID', ID), ('Type', Type), ('Number', Number), 
+                              ('Description', Description)])
 
 
 def add_generic(vcfheader, key, value):
-    vcfheader.add_meta(key = key, value = value)
+    vcfheader.add_meta(key=key, value=value)
 
 
 def add_structured(vcfheader, key, dic):
-    vcfheader.add_meta(key = key, items = dic.items())
+    vcfheader.add_meta(key=key, items=dic.items())
 
 
 ##################################

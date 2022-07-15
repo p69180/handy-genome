@@ -12,10 +12,12 @@ import importlib
 top_package_name = __name__.split('.')[0]
 common = importlib.import_module('.'.join([top_package_name, 'common']))
 workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
+toolsetup = importlib.import_module('.'.join([top_package_name, 'workflow', 'toolsetup']))
 split = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'split']))
 concat = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'concat']))
 veplib = importlib.import_module('.'.join([top_package_name, 'annotation', 'veplib']))
 varianthandler = importlib.import_module('.'.join([top_package_name, 'variantplus', 'varianthandler']))
+variantplus = importlib.import_module('.'.join([top_package_name, 'variantplus', 'variantplus']))
 breakends = importlib.import_module('.'.join([top_package_name, 'variantplus', 'breakends']))
 annotation = importlib.import_module('.'.join([top_package_name, 'annotation']))
 annotationdb = importlib.import_module('.'.join([top_package_name, 'annotation', 'annotationdb']))
@@ -23,34 +25,53 @@ ensembl_parser = importlib.import_module('.'.join([top_package_name, 'annotation
 indexing = importlib.import_module('.'.join([top_package_name, 'vcfeditor', 'indexing']))
 
 
-# unit job
-
 def unit_job(split_infile_path, split_outfile_path, fasta_path, species,
-             assembly, distance, refver):
-
-    vepinput_path = re.sub('\.vcf\.gz$', '.vepinput.vcf.gz', 
-                           split_infile_path)
-    vepoutput_path = re.sub('\.vcf\.gz$', '.vepoutput.vcf.gz', 
-                            split_infile_path)
-
+             assembly, distance, refver, do_features, do_cosmic, do_popfreq):
+    # basic setup
     fasta = pysam.FastaFile(fasta_path)
     chromdict = common.ChromDict(fasta=fasta)
-    dbsnp_vcf = annotation.VCFS_DBSNP[refver]
-    cosmic_coding_vcf = annotation.VCFS_COSMIC[refver]['coding']
-    cosmic_noncoding_vcf = annotation.VCFS_COSMIC[refver]['noncoding']
+    # setup for features 
     tabixfile_geneset = annotation.TABIXFILES_GENESET[refver]
     tabixfile_regulatory = annotation.TABIXFILES_REGULATORY[refver]
     tabixfile_repeats = annotation.TABIXFILES_REPEATS[refver]
+    # run VEP
+    if do_features:
+        vep_vr_dict = setup_vep(split_infile_path, fasta_path, fasta, 
+                                chromdict, species, assembly, distance)
+    else:
+        vep_vr_dict = None
+    # setup for popfreq
+    dbsnp_vcf = annotation.VCFS_DBSNP[refver]
+    # setup for COSMIC
+    cosmic_coding_vcf = annotation.VCFS_COSMIC[refver]['coding']
+    cosmic_noncoding_vcf = annotation.VCFS_COSMIC[refver]['noncoding']
 
+    add_annotations(
+        split_infile_path, split_outfile_path, vep_vr_dict, 
+        fasta, distance, refver, chromdict,
+        dbsnp_vcf, cosmic_coding_vcf, cosmic_noncoding_vcf, 
+        tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats,
+        do_features, do_cosmic, do_popfreq)
+
+
+def setup_vep(split_infile_path, fasta_path, fasta, chromdict, species,
+              assembly, distance):
+    vepinput_path = re.sub('\.vcf\.gz$', '.vepinput.vcf.gz', 
+                           split_infile_path)
+    vepoutput_path = re.sub('\.vcf\.gz$', '.vepoutput.vcf', 
+                            split_infile_path)
+        # VEP output is not compressed
     make_vepinput(split_infile_path, vepinput_path, fasta, chromdict)
     run_vep(vepinput_path, vepoutput_path, fasta_path, species, 
             assembly, distance)
-    add_annotations(
-        split_infile_path, split_outfile_path, vepoutput_path, 
-        fasta, distance, refver, chromdict,
-        dbsnp_vcf, cosmic_coding_vcf, 
-        cosmic_noncoding_vcf, tabixfile_geneset, 
-        tabixfile_regulatory, tabixfile_repeats)
+
+    # get vep_vr_dict
+    vep_vr_dict = dict()
+    with pysam.VariantFile(vepoutput_path) as in_vcf:
+        for vr in in_vcf.fetch():
+            vep_vr_dict[vr.id] = vr
+
+    return vep_vr_dict
 
 
 def make_vepinput(split_infile_path, vepinput_path, fasta, chromdict):
@@ -125,23 +146,16 @@ def run_vep(vepinput_path, vepoutput_path, fasta_path, species, assembly,
 
 
 def add_annotations(
-        split_infile_path, split_outfile_path, vepoutput_path, 
+        split_infile_path, split_outfile_path, vep_vr_dict, 
         fasta, distance, refver, chromdict,
         dbsnp_vcf, cosmic_coding_vcf, cosmic_noncoding_vcf,
-        tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats):
-    def get_vep_vr_dict(vepoutput_path):
-        vep_vr_dict = dict()
-        with pysam.VariantFile(vepoutput_path) as in_vcf:
-            for vr in in_vcf.fetch():
-                vep_vr_dict[vr.id] = vr
-
-        return vep_vr_dict
-
+        tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats,
+        do_features, do_cosmic, do_popfreq):
     def add_vep_sv(vep_vr_bnd1, vep_vr_bnd2, bnds, annotdb_bnd1, annotdb_bnd2,
                    tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats, 
                    distance):
         annotdb_bnd1.update_cmdline_vep(
-            vep_vr_bnd1, overwrite=False, create_new=True)
+            vep_vr_bnd1, overwrite=True, create_new=True)
         annotdb_bnd1.update_features_postvep_bnd(
             bnds.chrom_bnd1, bnds.pos_bnd1, bnds.endis5_bnd1, 
             tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats,
@@ -156,98 +170,115 @@ def add_annotations(
 
     def add_vep_nonsv(vep_vr, vcfspec, annotdb, tabixfile_geneset, 
                       tabixfile_regulatory, tabixfile_repeats, distance):
-        annotdb.update_cmdline_vep(vep_vr, overwrite=False, create_new=True)
+        annotdb.update_cmdline_vep(vep_vr, overwrite=True, create_new=True)
         annotdb.update_features_postvep_plain(
             vcfspec, tabixfile_geneset, tabixfile_regulatory, 
             tabixfile_repeats, distance)
 
     ###################
 
-    def add_annotations_to_vr_cpgmet(
+    def add_to_vr_cpgmet(
             vr, vep_vr_dict, distance, refver, fasta, chromdict,
-            tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats):
-        annotdb = annotationdb.AnnotDB('plain', refver, fasta, chromdict)
-        vcfspec = varianthandler.get_vcfspec(vr)
-        # fetch vep_vr
-        vep_vr = vep_vr_dict[vcfspec.get_id()] 
-        # vep
-        add_vep_nonsv(vep_vr, vcfspec, annotdb, tabixfile_geneset, 
-                      tabixfile_regulatory, tabixfile_repeats, distance)
-        # write
-        annotdb.write(vr, addkey=False)
+            tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats,
+            do_features, do_cosmic, do_popfreq):
+        vp = variantplus.VariantPlus(vr=vr, refver=refver, fasta=fasta,
+                                     chromdict=chromdict, set_annotdb=True,
+                                     set_readstats=False)
+        annotdb = vp.annotdb
+        vcfspec = vp.vcfspec
 
-    def add_annotations_to_vr_sv(
+        if do_features:
+            vep_vr = vep_vr_dict[vcfspec.get_id()] 
+            add_vep_nonsv(vep_vr, vcfspec, annotdb, tabixfile_geneset, 
+                          tabixfile_regulatory, tabixfile_repeats, distance)
+
+        # write
+        annotdb.write(vr, add_meta=False)
+
+    def add_to_vr_sv(
             vr, vep_vr_dict, bnds, distance, refver, fasta, chromdict,
-            tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats):
-        annotdb_bnd1 = annotationdb.AnnotDB('bnd1', refver, fasta, chromdict)
-        annotdb_bnd2 = annotationdb.AnnotDB('bnd2', refver, fasta, chromdict)
-        # fetch vep_vr
-        vep_vr_bnd1 = vep_vr_dict[bnds.get_id_bnd1()]
-        vep_vr_bnd2 = vep_vr_dict[bnds.get_id_bnd2()]
-        # vep
-        add_vep_sv(vep_vr_bnd1, vep_vr_bnd2, bnds, annotdb_bnd1, annotdb_bnd2,
-                   tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats, 
-                   distance)
-        # write
-        annotdb_bnd1.write(vr, addkey=False)
-        annotdb_bnd2.write(vr, addkey=False)
+            tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats,
+            do_features, do_cosmic, do_popfreq):
+        vp = variantplus.VariantPlus(vr=vr, refver=refver, fasta=fasta,
+                                     chromdict=chromdict, set_annotdb=True,
+                                     set_readstats=False)
+        annotdb_bnd1 = vp.annotdb_bnd1
+        annotdb_bnd2 = vp.annotdb_bnd2
 
-    def add_annotations_to_vr_nonsv(
+        if do_features:
+            vep_vr_bnd1 = vep_vr_dict[bnds.get_id_bnd1()]
+            vep_vr_bnd2 = vep_vr_dict[bnds.get_id_bnd2()]
+            add_vep_sv(vep_vr_bnd1, vep_vr_bnd2, bnds, annotdb_bnd1, 
+                       annotdb_bnd2, tabixfile_geneset, tabixfile_regulatory, 
+                       tabixfile_repeats, distance)
+
+        # write
+        annotdb_bnd1.write(vr, add_meta=False)
+        annotdb_bnd2.write(vr, add_meta=False)
+
+    def add_to_vr_nonsv(
             vr, vep_vr_dict, distance, refver, fasta, chromdict,
             dbsnp_vcf, cosmic_coding_vcf, cosmic_noncoding_vcf, 
-            tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats):
-        annotdb = annotationdb.AnnotDB('plain', refver, fasta, chromdict)
-        vcfspec = varianthandler.get_vcfspec(vr)
-        # fetch vep_vr
-        vep_vr = vep_vr_dict[vcfspec.get_id()] 
-        # vep
-        add_vep_nonsv(vep_vr, vcfspec, annotdb, tabixfile_geneset, 
-                      tabixfile_regulatory, tabixfile_repeats, distance)
-        # popfreq
-        annotdb.update_popfreq(vcfspec, dbsnp_vcf, search_equivs=True, 
-                               overwrite=False)
-        # cosmic
-        annotdb.update_cosmic(vcfspec, cosmic_coding_vcf, 
-                              cosmic_noncoding_vcf,  
-                              search_equivs=True, overwrite=False)
-        # write
-        annotdb.write(vr, addkey=False)
+            tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats,
+            do_features, do_cosmic, do_popfreq):
+        vp = variantplus.VariantPlus(vr=vr, refver=refver, fasta=fasta,
+                                     chromdict=chromdict, set_annotdb=True,
+                                     set_readstats=False)
+        annotdb = vp.annotdb
+        vcfspec = vp.vcfspec
 
-    def add_annotations_to_vr(
+        if do_features:
+            vep_vr = vep_vr_dict[vcfspec.get_id()] 
+            add_vep_nonsv(vep_vr, vcfspec, annotdb, tabixfile_geneset, 
+                          tabixfile_regulatory, tabixfile_repeats, distance)
+        if do_popfreq:
+            annotdb.update_popfreq(vcfspec, dbsnp_vcf, search_equivs=True, 
+                                   overwrite=True)
+        if do_cosmic:
+            annotdb.update_cosmic(vcfspec, cosmic_coding_vcf, 
+                                  cosmic_noncoding_vcf,
+                                  search_equivs=True, overwrite=True)
+        # write
+        annotdb.write(vr, add_meta=False)
+
+    def add_to_vr(
             vr, vep_vr_dict, distance, fasta, chromdict,
             dbsnp_vcf, cosmic_coding_vcf, cosmic_noncoding_vcf, 
-            tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats):
+            tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats,
+            do_features, do_cosmic, do_popfreq):
         if varianthandler.check_SV(vr):
             vr_svinfo = breakends.get_vr_svinfo_standard_vr(vr, fasta, 
                                                             chromdict)
             if vr_svinfo['is_bnd1']:
                 bnds = breakends.get_bnds_from_vr_svinfo(vr, vr_svinfo, fasta, 
                                                          chromdict)
-                add_annotations_to_vr_sv(
+                add_to_vr_sv(
                     vr, vep_vr_dict, bnds, distance, refver, fasta, chromdict,
-                    tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats)
+                    tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats,
+                    do_features, do_cosmic, do_popfreq)
         elif varianthandler.check_cpgmet(vr):
-            add_annotations_to_vr_cpgmet(
+            add_to_vr_cpgmet(
                 vr, vep_vr_dict, distance, refver, fasta, chromdict,
-                tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats)
+                tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats,
+                do_features, do_cosmic, do_popfreq)
         else:
-            add_annotations_to_vr_nonsv(
+            add_to_vr_nonsv(
                 vr, vep_vr_dict, distance, refver, fasta, chromdict,
                 dbsnp_vcf, cosmic_coding_vcf, cosmic_noncoding_vcf, 
-                tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats)
+                tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats,
+                do_features, do_cosmic, do_popfreq)
 
     # main
-    vep_vr_dict = get_vep_vr_dict(vepoutput_path)
     with pysam.VariantFile(split_infile_path) as in_vcf:
         annotationdb.add_infometas(in_vcf.header)
         with pysam.VariantFile(split_outfile_path, mode='wz', 
                                header=in_vcf.header) as out_vcf:
             for vr in in_vcf.fetch():
-                add_annotations_to_vr(
+                add_to_vr(
                     vr, vep_vr_dict, distance, fasta, chromdict,
                     dbsnp_vcf, cosmic_coding_vcf, cosmic_noncoding_vcf, 
-                    tabixfile_geneset, tabixfile_regulatory, 
-                    tabixfile_repeats)
+                    tabixfile_geneset, tabixfile_regulatory, tabixfile_repeats,
+                    do_features, do_cosmic, do_popfreq)
                 out_vcf.write(vr)
 
 
@@ -257,14 +288,22 @@ def argument_parser(cmdargs):
     def sanity_check(args):
         pass
 
-    def modifier(args):
+    def postprocess(args):
         args.species = veplib.REFVER_TO_VEPARGS[args.refver]['species']
         args.assembly = veplib.REFVER_TO_VEPARGS[args.refver]['assembly']
 
+        if not any([args.do_features, args.do_cosmic, args.do_popfreq]):
+            args.do_features = True
+            args.do_cosmic = True
+            args.do_popfreq = True
+
     parser_dict = workflow.init_parser(
-        description=textwrap.dedent(f"""\
-            Adds transcript, regulatory elements, repeat sequences, cosmic 
-            information, and population frequency to the input vcf file."""))
+        description=(
+            f'Adds transcript, regulatory elements, repeat sequences, COSMIC '
+            f'information, and population frequency to the input vcf file. '
+            f'If one or more of "--do-features", "--do-cosmic", '
+            f'or "--do-popfreq" is set, only those items are added; '
+            f'if none of them is set, all is done.'))
 
     # required
     workflow.add_infile_arg(parser_dict['required'], required=True)
@@ -277,9 +316,8 @@ def argument_parser(cmdargs):
     workflow.add_outfmt_arg(parser_dict['optional'], required=False)
     parser_dict['optional'].add_argument(
         '--distance', required=False, default=5000,
-        help=textwrap.dedent(f"""\
-            Distance (in bp) from the mutation location to fetch feature 
-            information. Used for VEP and custom file annotation."""))
+        help=(f'Distance (in bp) from the mutation location to fetch feature '
+              f'information. Used for VEP and custom file annotation.'))
     workflow.add_logging_args(parser_dict)
     workflow.add_scheduler_args(parser_dict, default_parallel=1, 
                                 default_sched='slurm')
@@ -287,10 +325,21 @@ def argument_parser(cmdargs):
     # flag
     workflow.add_rmtmp_arg(parser_dict)
     workflow.add_index_arg(parser_dict)
+    parser_dict['flag'].add_argument(
+        '--do-features', dest='do_features', action='store_true',
+        help=(f'If set, runs vep and annotates geneset, regulatory '
+              f'element, and repeat element information.'))
+    parser_dict['flag'].add_argument(
+        '--do-cosmic', dest='do_cosmic', action='store_true',
+        help=f'If set, annotates COSMIC information.')
+    parser_dict['flag'].add_argument(
+        '--do-popfreq', dest='do_popfreq', action='store_true',
+        help=(f'If set, annotates population frequency information from '
+             f'dbSNP database.'))
 
     args = parser_dict['main'].parse_args(cmdargs)
     sanity_check(args)
-    modifier(args)
+    postprocess(args)
 
     return args
 
@@ -315,6 +364,7 @@ def split_infile(infile_path, tmpdir_paths, parallel):
 
 def write_jobscripts(tmpdir_paths, split_infile_path_list, fasta_path, 
                      species, assembly, distance, refver,
+                     do_features, do_cosmic, do_popfreq,
                      jobname_prefix='annotate_all', ncore_perjob=2):
     jobscript_path_list = list()
     split_outfile_path_list = list()
@@ -353,7 +403,8 @@ def write_jobscripts(tmpdir_paths, split_infile_path_list, fasta_path,
             from {__name__} import unit_job
 
             log = open('{logpath}', 'w')
-            with contextlib.redirect_stdout(log), \\
+            with \\
+                    contextlib.redirect_stdout(log), \\
                     contextlib.redirect_stderr(log):
                 try:
                     unit_job(
@@ -364,6 +415,9 @@ def write_jobscripts(tmpdir_paths, split_infile_path_list, fasta_path,
                         assembly='{assembly}', 
                         distance={distance},
                         refver='{refver}',
+                        do_features={do_features},
+                        do_cosmic={do_cosmic},
+                        do_popfreq={do_popfreq},
                         )
                 except:
                     print(traceback.format_exc())
@@ -396,35 +450,41 @@ def concat_results(split_outfile_path_list, outfile_path, mode_pysam):
 def main(cmdargs):
     args = argument_parser(cmdargs)
 
-    # setups logger
-    logger = workflow.get_logger(name='annotate_all', stderr=(not args.silent),
-                                 filename=args.log, append=False)
+    # make temporary directory tree
+    tmpdir_paths = make_tmpdir(args.infile_path)
+
+    # setup logger
+    logger = toolsetup.setup_logger(args=args, 
+                                    tmpdir_root=tmpdir_paths['root'],
+                                    with_genlog=True)
     logger.info('Beginning')
 
-    # setups other parameters
-    fasta_path = common.DEFAULT_FASTA_PATH_DICT[args.refver]
+    # setup other parameters
+    fasta_path = common.DEFAULT_FASTA_PATHS[args.refver]
 
-    # splits the input file and run jobs
-    tmpdir_paths = make_tmpdir(args.infile_path)
+    # split the input file and run jobs
     logger.info('Splitting the input file')
     split_infile_path_list = split_infile(args.infile_path, tmpdir_paths, 
                                           args.parallel)
     jobscript_path_list, split_outfile_path_list = write_jobscripts(
         tmpdir_paths, split_infile_path_list, fasta_path, args.species, 
-        args.assembly, args.distance, args.refver)
+        args.assembly, args.distance, args.refver,
+        args.do_features, args.do_cosmic, args.do_popfreq)
     logger.info('Running annotation jobs for each split file')
     workflow.run_jobs(jobscript_path_list, sched=args.sched, 
-                      intv_check=args.intv_check, intv_submit=args.intv_submit, 
+                      intv_check=args.intv_check, 
+                      intv_submit=args.intv_submit, 
                       logger=logger, log_dir=tmpdir_paths['logs'],
                       raise_on_failure=True)
 
-    # concatenates split files
+    # concatenate split files
     logger.info('Merging split files')
-    concat_results(split_outfile_path_list, args.outfile_path, args.mode_pysam)
+    concat_results(split_outfile_path_list, args.outfile_path, 
+                   args.mode_pysam)
 
     # rmtmp, index
     if not args.donot_rm_tmp:
-        shutil.rmtree(tmpdir_paths['top'])
+        shutil.rmtree(tmpdir_paths['root'])
     if not args.donot_index:
         indexing.index_vcf(args.outfile_path)
 

@@ -6,6 +6,7 @@ import importlib
 top_package_name = __name__.split('.')[0]
 common = importlib.import_module('.'.join([top_package_name, 'common']))
 workflow = importlib.import_module('.'.join([top_package_name, 'workflow']))
+toolsetup = importlib.import_module('.'.join([top_package_name, 'workflow', 'toolsetup']))
 svcaller_parser = importlib.import_module('.'.join([top_package_name, 'variantplus', 'svcaller_parser']))
 equivalents = importlib.import_module('.'.join([top_package_name, 'variantplus', 'equivalents']))
 varianthandler = importlib.import_module('.'.join([top_package_name, 'variantplus', 'varianthandler']))
@@ -71,6 +72,10 @@ def process_sv(vr, out_vr_list, bnds_set, fasta, chromdict, logger):
     """
 
     bnds = svcaller_parser.get_bnds_from_caller_vr(vr, fasta, chromdict) 
+
+    ##
+    ##
+
     if bnds is None:
         raise Exception(f'Error while parsing this SV variant record:\n{vr}')
 
@@ -113,9 +118,8 @@ def process_monoallelic_vr(vr, out_vr_list, nonsv_set, bnds_set, fasta,
 
 def main(cmdargs):
     args = argument_parser(cmdargs)
-    logger = workflow.get_logger(name='caller_postprocessor',
-                                 stderr=(not args.silent),
-                                 filename=args.log, append=False)
+    logger = toolsetup.setup_logger(args)
+
     logger.info('BEGINNING')
 
     fasta = pysam.FastaFile(args.fasta_path)
@@ -137,7 +141,7 @@ def main(cmdargs):
                 else:
                     for alt in vr.alts:
                         new_vr = vr.copy()
-                        new_vr.alts = [ alt ]
+                        new_vr.alts = [alt]
                         process_monoallelic_vr(new_vr, out_vr_list, nonsv_set, 
                                                bnds_set, fasta, chromdict, 
                                                logger)

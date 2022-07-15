@@ -15,8 +15,16 @@ CIGAROPDICT = {'M': 0, 'I': 1, 'D': 2, 'N': 3, 'S': 4, 'H': 5,
 CIGARPAT = re.compile(f'([0-9]+)([{"".join(CIGAROPDICT.keys())}])')
 
 
+# class definitions
+Clipspec = collections.namedtuple('Clipspec', 
+                                  ['start1', 'is_forward', 
+                                   'seq', 'qual', 'qname'])
+
+
 class NoMDTagError(Exception):
     pass
+
+###################################
 
 
 def check_bad_read(read):
@@ -325,10 +333,10 @@ def get_NM(read, fasta=None, ref_seq_padded=None, read_seq_padded=None):
 
 def get_pairorient_substring(read, mate=False):
     if mate:
-        orientation = 'R' if read.mate_is_reverse else 'F'
+        orientation = 'r' if read.mate_is_reverse else 'f'
         read12 = '2' if read.is_read1 else '1'
     else:
-        orientation = 'R' if read.is_reverse else 'F'
+        orientation = 'r' if read.is_reverse else 'f'
         read12 = '1' if read.is_read1 else '2'
 
     return orientation + read12
@@ -351,7 +359,6 @@ def get_pairorient(read):
             pairorient = substring1 + substring2
 
     return pairorient
-
 
 #####
 
@@ -384,8 +391,7 @@ def get_threeprime_end(read):
 #####
 
 def get_template_range0(read, with_softclip=False):
-    """
-    Returns a range object representing the interval between 5' ends of 
+    """Returns a range object representing the interval between 5' ends of 
         the read pairs.
     It is in 0-based, half-open format (bed format).
     """
@@ -423,6 +429,29 @@ def get_softclip_ends_range0(read):
         end = read.reference_end
 
     return range(start, end)
+
+
+def get_softclip_specs(read):
+    clipspec_list = list()
+    if read.cigartuples[0][0] == 4:
+        start1 = read.reference_start
+        cliplen = read.cigartuples[0][1]
+        seq = read.query_sequence[:cliplen][::-1]
+        qual = list(read.query_qualities)[:cliplen][::-1]
+        is_forward = False
+        qname = read.query_name
+        clipspec_list.append(Clipspec(start1, is_forward, seq, qual, qname))
+
+    if read.cigartuples[-1][0] == 4:
+        start1 = read.reference_end + 1
+        cliplen = read.cigartuples[-1][1]
+        seq = read.query_sequence[-cliplen:]
+        qual = list(read.query_qualities)[-cliplen:]
+        is_forward = True
+        qname = read.query_name
+        clipspec_list.append(Clipspec(start1, is_forward, seq, qual, qname))
+
+    return clipspec_list
 
 #####
 

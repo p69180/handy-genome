@@ -7,7 +7,7 @@ alleleinfosetup = importlib.import_module('.'.join([top_package_name, 'readplus'
 
 DEFAULT_FLANKLEN_PARSIDE = 1
 DEFAULT_FLANKLEN_BNDSIDE = 1
-BND_DISTANCE_THRESHOLD = 700
+BND_DISTANCE_THRESHOLD = 1000
 
 
 def make_alleleinfoitem_readpluspair(aiitem_bnd1_rp1, aiitem_bnd1_rp2,
@@ -153,17 +153,6 @@ def make_alleleinfoitem_readplus(bnds, is_bnd1, rp,
             else:
                 alleleinfoitem['other_support'] = True
 
-    def get_distance_to_bnd(rp, chrom, pos_range0):
-        if rp.check_overlaps(pos_range0):
-            distance = 0
-        else:
-            if rp.read.reference_end <= min(pos_range0):
-                distance = min(pos_range0) - rp.read.reference_end + 1
-            elif rp.read.reference_start > max(pos_range0):
-                distance = rp.read.reference_start - max(pos_range0)
-
-        return distance
-
     # get parameters
     (chrom, pos_range0, endis5) = bnds.get_params(is_bnd1)
     bndside_flankrange0 = bnds.get_flank_range0(mode='bnd_dist', 
@@ -182,7 +171,7 @@ def make_alleleinfoitem_readplus(bnds, is_bnd1, rp,
 
     # main
     if chrom == rp.read.reference_name:
-        distance = get_distance_to_bnd(rp, chrom, pos_range0)
+        distance = rp.get_distance(pos_range0)
         if distance > BND_DISTANCE_THRESHOLD:
             alleleinfoitem['noninformative'] = True
         else:
